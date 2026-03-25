@@ -35,8 +35,8 @@ def test_approving_candidate_creates_rule(session: Session) -> None:
     assert rule.sender_address == "newsletter@example.com"
     assert rule.stale_days == 3
     assert rule.action == "archive"
-    assert rule.created_at is not None
-    assert rule.last_executed_at is None
+    assert not hasattr(rule, "created_at")
+    assert not hasattr(rule, "last_executed_at")
     session.refresh(candidate)
     assert candidate.status == "approved"
 
