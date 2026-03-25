@@ -94,6 +94,11 @@ async def test_get_message_metadata_requests_metadata_format(settings: Settings)
     request = requests[0]
     assert request.headers["Authorization"] == "Bearer token"
     assert request.url.params["format"] == "metadata"
+    assert request.url.params.get_list("metadataHeaders") == [
+        "From",
+        "Subject",
+        "List-Unsubscribe",
+    ]
 
 
 @pytest.mark.asyncio
