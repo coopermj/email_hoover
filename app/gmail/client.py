@@ -27,7 +27,10 @@ class GmailClient:
     async def get_message_metadata(self, message_id: str) -> dict:
         response = await self._client.get(
             f"/gmail/v1/users/me/messages/{message_id}",
-            params={"format": "metadata"},
+            params={
+                "format": "metadata",
+                "metadataHeaders": ["From", "Subject", "List-Unsubscribe"],
+            },
             headers={"Authorization": f"Bearer {self._token_getter()}"},
         )
         response.raise_for_status()
