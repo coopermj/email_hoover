@@ -66,6 +66,11 @@ class FlakyGmailClientStub(GmailClientStub):
         raise RuntimeError(f"transient failure for {message_id}")
 
 
+class MissingTokenGmailClientStub(GmailClientStub):
+    async def preview_matches(self, query: str, *, action: str):
+        raise ValueError("Gmail token missing")
+
+
 @pytest.fixture
 def gmail_client_stub() -> GmailClientStub:
     return GmailClientStub()
@@ -74,6 +79,11 @@ def gmail_client_stub() -> GmailClientStub:
 @pytest.fixture
 def flaky_gmail_client_stub() -> FlakyGmailClientStub:
     return FlakyGmailClientStub()
+
+
+@pytest.fixture
+def missing_token_gmail_client_stub() -> MissingTokenGmailClientStub:
+    return MissingTokenGmailClientStub()
 
 
 def seed_rule(
@@ -230,3 +240,25 @@ async def test_dry_run_records_planned_actions_without_mutating_gmail(
     assert gmail_client_stub.archived == []
     dry_run_logs = session.exec(select(RunLog).where(RunLog.action == "dry_run:archive")).all()
     assert [log.message_id for log in dry_run_logs] == ["m-1", "m-2"]
+
+
+@pytest.mark.asyncio
+async def test_executor_bubbles_auth_failures_without_pausing_rule(
+    session: Session,
+    missing_token_gmail_client_stub: MissingTokenGmailClientStub,
+) -> None:
+    from app.services.executor import run_cleanup_once
+
+    rule = seed_rule(
+        session,
+        sender_address="auth@example.com",
+        sender_name="Auth Sender",
+        action="archive",
+    )
+
+    with pytest.raises(ValueError, match="Gmail token missing"):
+        await run_cleanup_once(session, missing_token_gmail_client_stub, triggered_by="scheduled")
+
+    session.refresh(rule)
+    assert rule.pause_reason is None
+    assert session.exec(select(RunLog)).all() == []

@@ -82,6 +82,9 @@ async def run_cleanup_once(
                 )
                 summary.messages_acted_on += 1
         except Exception as exc:
+            if is_auth_failure(exc):
+                session.rollback()
+                raise
             session.add(
                 RunLog(
                     rule_id=rule.id,
@@ -104,6 +107,13 @@ async def run_cleanup_once(
 
     session.commit()
     return summary
+
+
+def is_auth_failure(exc: Exception) -> bool:
+    if not isinstance(exc, ValueError):
+        return False
+    message = str(exc).lower()
+    return "token" in message or "auth" in message
 
 
 def _already_processed(session: Session, rule_id: int, message_id: str) -> bool:

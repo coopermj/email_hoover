@@ -5,6 +5,7 @@ from sqlmodel import select
 from sqlmodel import Session, SQLModel, create_engine
 
 from app import create_app
+from app.gmail.auth import AuthState
 from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
@@ -272,3 +273,18 @@ def test_run_cleanup_value_error_redirects_with_operator_message(
     assert response.status_code == 303
     follow_up = client.get(response.headers["location"])
     assert "Gmail token missing" in follow_up.text
+
+
+def test_scheduler_is_paused_when_auth_state_is_disconnected(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.gmail.auth.AuthState.from_disk",
+        lambda settings: AuthState(False, "missing_token"),
+    )
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Reconnect Gmail" in response.text

@@ -3,15 +3,24 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .config import APP_NAME, APP_VERSION
-from .db import init_db
+from .config import APP_NAME, APP_VERSION, Settings
+from .db import get_engine, init_db
+from .services.scheduler import start_scheduler
 from .web import router as web_router
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    app.state.settings = Settings.from_env()
+    app.state.engine = get_engine()
     init_db()
-    yield
+    app.state.scheduler = start_scheduler(app)
+    try:
+        yield
+    finally:
+        scheduler = getattr(app.state, "scheduler", None)
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
 
 
 def create_app() -> FastAPI:

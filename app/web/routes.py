@@ -10,10 +10,12 @@ from sqlmodel import Session, select
 
 from app.config import Settings
 from app.db import get_session
+from app.gmail.auth import AuthState
 from app.gmail.client import GmailClient
 from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
+from app.services.scheduler import build_gmail_client
 from app.services.executor import run_cleanup_once
 from app.services.rules import approve_candidate, mark_candidate_postponed, mark_candidate_rejected
 
@@ -30,12 +32,8 @@ class ActivityEntry:
     detail: str
 
 
-def _read_gmail_token() -> str:
-    return Settings.from_env().gmail_token_path.read_text(encoding="utf-8").strip()
-
-
 async def get_gmail_client() -> AsyncGenerator[GmailClient, None]:
-    gmail_client = GmailClient(Settings.from_env(), token_getter=_read_gmail_token)
+    gmail_client = build_gmail_client(Settings.from_env())
     try:
         yield gmail_client
     finally:
@@ -128,6 +126,24 @@ def _validate_approval_inputs(stale_days: int, action: str) -> str | None:
     return None
 
 
+def _scheduler_status_message(request: Request) -> str | None:
+    explicit_error = request.query_params.get("error")
+    if explicit_error is not None:
+        return explicit_error
+
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    auth_state = AuthState.from_disk(settings)
+    scheduler = getattr(request.app.state, "scheduler", None)
+    cleanup_job = scheduler.get_job("cleanup") if scheduler is not None else None
+    scheduler_paused = cleanup_job is not None and cleanup_job.next_run_time is None
+
+    if not auth_state.connected:
+        return "Reconnect Gmail to resume scheduled cleanup."
+    if scheduler_paused:
+        return "Scheduled cleanup is paused."
+    return None
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -138,7 +154,7 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
             "rules": list_rules(session),
             "recent_activity": list_recent_activity(session),
             "exceptions": list_paused_rules(session),
-            "error_message": request.query_params.get("error"),
+            "error_message": _scheduler_status_message(request),
         },
     )
 
