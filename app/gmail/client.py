@@ -1,8 +1,17 @@
+from dataclasses import dataclass
 from collections.abc import Callable
 
 import httpx
 
 from app.config import Settings
+
+
+@dataclass(slots=True)
+class RulePreviewMatch:
+    message_id: str
+    planned_action: str
+    thread_id: str | None = None
+    subject: str = ""
 
 
 class GmailClient:
@@ -51,5 +60,29 @@ class GmailClient:
         )
         response.raise_for_status()
 
+    async def preview_matches(self, query: str, *, action: str) -> list[RulePreviewMatch]:
+        matches: list[RulePreviewMatch] = []
+        for message_id in await self.list_message_ids(query):
+            metadata = await self.get_message_metadata(message_id)
+            headers = _extract_headers(metadata)
+            matches.append(
+                RulePreviewMatch(
+                    message_id=message_id,
+                    thread_id=metadata.get("threadId"),
+                    subject=headers.get("Subject", ""),
+                    planned_action=action,
+                )
+            )
+        return matches
+
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _extract_headers(metadata: dict) -> dict[str, str]:
+    payload = metadata.get("payload", {})
+    return {
+        header["name"]: header["value"]
+        for header in payload.get("headers", [])
+        if "name" in header and "value" in header
+    }
