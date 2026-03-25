@@ -177,3 +177,48 @@ async def test_discovery_service_updates_existing_pending_candidate(session: Ses
     assert candidate.recommended_stale_days == 2
     assert candidate.recommended_action == "trash"
     assert candidate.risk_level == "low"
+
+
+@pytest.mark.asyncio
+async def test_discovery_service_normalizes_sender_address_case_before_grouping(session: Session) -> None:
+    from app.services.discovery import discover_newsletter_candidates
+
+    class FakeGmailClient:
+        async def list_message_ids(self, query: str) -> list[str]:
+            return ["m1", "m2"]
+
+        async def get_message_metadata(self, message_id: str) -> dict:
+            payloads = {
+                "m1": {
+                    "id": "m1",
+                    "labelIds": ["CATEGORY_PROMOTIONS"],
+                    "payload": {
+                        "headers": [
+                            {"name": "From", "value": "Daily Example <Daily@Example.com>"},
+                            {"name": "Subject", "value": "Morning edition"},
+                            {"name": "List-Unsubscribe", "value": "<mailto:leave@example.com>"},
+                        ]
+                    },
+                },
+                "m2": {
+                    "id": "m2",
+                    "labelIds": ["CATEGORY_PROMOTIONS"],
+                    "payload": {
+                        "headers": [
+                            {"name": "From", "value": "Daily Example <daily@example.com>"},
+                            {"name": "Subject", "value": "Evening edition"},
+                        ]
+                    },
+                },
+            }
+            return payloads[message_id]
+
+    created = await discover_newsletter_candidates(session, FakeGmailClient())
+
+    assert created == 1
+    candidates = session.exec(select(Candidate)).all()
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.sender_address == "daily@example.com"
+    assert json.loads(candidate.sample_subjects_json) == ["Morning edition", "Evening edition"]
+    assert json.loads(candidate.example_message_ids_json) == ["m1", "m2"]

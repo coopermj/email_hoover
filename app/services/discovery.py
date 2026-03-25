@@ -15,13 +15,14 @@ async def discover_newsletter_candidates(session: Session, gmail_client: object)
         metadata = await gmail_client.get_message_metadata(message_id)
         headers = _extract_headers(metadata)
         sender_name, sender_address = parseaddr(headers.get("From", ""))
-        if not sender_address:
+        normalized_address = _normalize_sender_address(sender_address)
+        if not normalized_address:
             continue
 
         group = sender_groups.setdefault(
-            sender_address,
+            normalized_address,
             {
-                "sender_name": sender_name or sender_address,
+                "sender_name": sender_name or normalized_address,
                 "headers": {},
                 "subjects": [],
                 "message_ids": [],
@@ -110,3 +111,7 @@ def _preferred_category(categories: list[str]) -> str:
     if "social" in categories:
         return "social"
     return "unknown"
+
+
+def _normalize_sender_address(sender_address: str) -> str:
+    return sender_address.strip().lower()
