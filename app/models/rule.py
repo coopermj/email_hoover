@@ -14,6 +14,8 @@ class CleanupRule(SQLModel, table=True):
     def can_run(self, *, triggered_by: str) -> bool:
         if not self.enabled:
             return False
+        if self.pause_reason is not None:
+            return False
         if triggered_by == "scheduled" and not self.schedule_enabled:
             return False
         return True

@@ -128,8 +128,17 @@ async def test_run_cleanup_once_records_audit_and_skips_already_processed_messag
 async def test_executor_pauses_rule_after_repeated_gmail_failures(
     session: Session,
     flaky_gmail_client_stub: FlakyGmailClientStub,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.services.executor import run_cleanup_once
+    import app.services.executor as executor_module
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(executor_module.asyncio, "sleep", fake_sleep)
 
     rule = seed_rule(
         session,
@@ -145,6 +154,18 @@ async def test_executor_pauses_rule_after_repeated_gmail_failures(
     assert "retry_exhausted" in result.errors[0]
     session.refresh(rule)
     assert rule.pause_reason == "retry_exhausted"
+    assert flaky_gmail_client_stub.failures["m-1"] == 3
+    assert sleeps == [0.1, 0.2]
+
+    pause_logs = session.exec(select(RunLog).where(RunLog.action == "paused")).all()
+    error_logs = session.exec(select(RunLog).where(RunLog.action == "error")).all()
+    assert len(pause_logs) == 1
+    assert pause_logs[0].error_message == "retry_exhausted"
+    assert len(error_logs) == 1
+    assert "transient failure for m-1" in error_logs[0].error_message
+
+    second = await run_cleanup_once(session, flaky_gmail_client_stub, triggered_by="scheduled")
+    assert second.rules_ran == 0
     assert flaky_gmail_client_stub.failures["m-1"] == 3
 
 
@@ -176,6 +197,16 @@ async def test_executor_pauses_rule_when_match_volume_spikes(
     session.refresh(rule)
     assert rule.pause_reason == "volume_spike"
     assert gmail_client_stub.trashed == []
+
+    second = await run_cleanup_once(
+        session,
+        gmail_client_stub,
+        triggered_by="scheduled",
+        dry_run=False,
+        max_matches_per_rule=100,
+    )
+    assert second.rules_ran == 0
+    assert gmail_client_stub.preview_calls == [("from:spike@example.com older_than:2d", "trash")]
 
 
 @pytest.mark.asyncio

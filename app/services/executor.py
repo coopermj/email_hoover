@@ -82,12 +82,21 @@ async def run_cleanup_once(
                 )
                 summary.messages_acted_on += 1
         except Exception as exc:
+            session.add(
+                RunLog(
+                    rule_id=rule.id,
+                    action="error",
+                    trigger=triggered_by,
+                    triggered_by=triggered_by,
+                    status="error",
+                    error_message=str(exc),
+                )
+            )
             _pause_rule(
                 session,
                 rule,
                 reason="retry_exhausted",
                 triggered_by=triggered_by,
-                error_message=str(exc),
             )
             summary.failed_rules += 1
             summary.paused_rules += 1
@@ -124,7 +133,7 @@ async def _apply_with_retry(
             last_error = exc
             if attempt == attempts:
                 break
-            await asyncio.sleep(0)
+            await asyncio.sleep(_retry_backoff_seconds(attempt))
 
     assert last_error is not None
     raise last_error
@@ -141,6 +150,10 @@ async def _dispatch_action(gmail_client: GmailClient, message_id: str, action: s
     raise ValueError(msg)
 
 
+def _retry_backoff_seconds(attempt: int) -> float:
+    return 0.1 * (2 ** (attempt - 1))
+
+
 def _pause_rule(
     session: Session,
     rule: CleanupRule,
@@ -148,7 +161,6 @@ def _pause_rule(
     reason: str,
     triggered_by: str,
     matched_count: int = 0,
-    error_message: str | None = None,
 ) -> None:
     rule.pause_reason = reason
     session.add(rule)
@@ -160,6 +172,6 @@ def _pause_rule(
             triggered_by=triggered_by,
             status="paused",
             matched_count=matched_count,
-            error_message=reason if error_message is None else f"{reason}: {error_message}",
+            error_message=reason,
         )
     )
