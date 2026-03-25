@@ -24,7 +24,10 @@ def test_auth_state_reports_reconnect_when_token_missing(settings: Settings) -> 
 
 
 def test_auth_state_reports_connected_when_token_exists(settings: Settings) -> None:
-    settings.gmail_token_path.write_text("{}", encoding="utf-8")
+    settings.gmail_token_path.write_text(
+        '{"token":"access-token","refresh_token":"refresh-token","token_uri":"https://oauth2.googleapis.com/token","client_id":"client-id","client_secret":"client-secret","scopes":["https://www.googleapis.com/auth/gmail.modify"]}',
+        encoding="utf-8",
+    )
 
     state = AuthState.from_disk(settings)
 

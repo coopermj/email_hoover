@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from app.config import Settings
+from app.gmail.oauth import has_refreshable_credentials
 
 
 @dataclass(frozen=True)
@@ -12,4 +13,6 @@ class AuthState:
     def from_disk(cls, settings: Settings) -> "AuthState":
         if not settings.gmail_token_path.exists():
             return cls(connected=False, reason="missing_token")
+        if not has_refreshable_credentials(settings.gmail_token_path):
+            return cls(connected=False, reason="invalid_token")
         return cls(connected=True)
