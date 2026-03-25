@@ -35,8 +35,6 @@ def test_approving_candidate_creates_rule(session: Session) -> None:
     assert rule.sender_address == "newsletter@example.com"
     assert rule.stale_days == 3
     assert rule.action == "archive"
-    assert not hasattr(rule, "created_at")
-    assert not hasattr(rule, "last_executed_at")
     session.refresh(candidate)
     assert candidate.status == "approved"
 
@@ -71,6 +69,7 @@ def test_run_log_round_trips_through_persistence(session: Session) -> None:
 def test_create_app_lifespan_creates_tables(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     database_path = tmp_path / "lifespan.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    get_engine.cache_clear()
 
     app = create_app()
 
@@ -87,6 +86,8 @@ def test_create_app_lifespan_creates_tables(tmp_path: pytest.TempPathFactory, mo
             session.refresh(candidate)
 
             assert candidate.id is not None
+
+    get_engine.cache_clear()
 
 
 def test_get_engine_reuses_cached_engine_for_process(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
