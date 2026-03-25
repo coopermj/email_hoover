@@ -16,7 +16,7 @@ from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
 from app.services.executor import is_auth_failure
-from app.services.scheduler import build_gmail_client
+from app.services.scheduler import AUTH_RECONNECT_MESSAGE, build_gmail_client, pause_cleanup_job
 from app.services.executor import run_cleanup_once
 from app.services.rules import approve_candidate, mark_candidate_postponed, mark_candidate_rejected
 
@@ -137,16 +137,19 @@ def _scheduler_status_message(request: Request) -> str | None:
     scheduler = getattr(request.app.state, "scheduler", None)
     cleanup_job = scheduler.get_job("cleanup") if scheduler is not None else None
     scheduler_paused = cleanup_job is not None and cleanup_job.next_run_time is None
+    auth_failed = getattr(request.app.state, "cleanup_job_auth_failed", False)
 
     if not auth_state.connected:
-        return "Reconnect Gmail to resume scheduled cleanup."
+        return AUTH_RECONNECT_MESSAGE
+    if scheduler_paused and auth_failed:
+        return AUTH_RECONNECT_MESSAGE
     if scheduler_paused:
         return "Scheduled cleanup is paused."
     return None
 
 
 def _auth_reconnect_message() -> str:
-    return "Reconnect Gmail to resume scheduled cleanup."
+    return AUTH_RECONNECT_MESSAGE
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -201,6 +204,7 @@ def postpone_candidate(candidate_id: int, session: Session = Depends(get_session
 
 @router.post("/runs/execute")
 async def run_cleanup(
+    request: Request,
     session: Session = Depends(get_session),
     gmail_client: GmailClient = Depends(get_gmail_client),
 ) -> RedirectResponse:
@@ -208,6 +212,7 @@ async def run_cleanup(
         await run_cleanup_once(session, gmail_client, triggered_by="manual", dry_run=False)
     except Exception as exc:
         if is_auth_failure(exc):
+            pause_cleanup_job(request.app, auth_failed=True)
             return _redirect_with_error(_auth_reconnect_message())
         if not isinstance(exc, ValueError):
             raise

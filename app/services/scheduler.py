@@ -11,6 +11,9 @@ from app.gmail.client import GmailClient
 from app.services.executor import RunSummary, is_auth_failure, run_cleanup_once
 
 
+AUTH_RECONNECT_MESSAGE = "Reconnect Gmail to resume scheduled cleanup."
+
+
 def _read_gmail_token(token_path: Path) -> str:
     return token_path.read_text(encoding="utf-8").strip()
 
@@ -34,13 +37,14 @@ async def run_scheduled_cleanup(app: FastAPI) -> RunSummary:
             )
     except Exception as exc:
         if is_auth_failure(exc):
-            pause_cleanup_job(app)
+            pause_cleanup_job(app, auth_failed=True)
         raise
     finally:
         await gmail_client.aclose()
 
 
-def pause_cleanup_job(app: FastAPI) -> None:
+def pause_cleanup_job(app: FastAPI, *, auth_failed: bool = False) -> None:
+    app.state.cleanup_job_auth_failed = auth_failed
     scheduler = getattr(app.state, "scheduler", None)
     if scheduler is None:
         return
@@ -51,6 +55,7 @@ def pause_cleanup_job(app: FastAPI) -> None:
 
 
 def start_scheduler(app: FastAPI) -> AsyncIOScheduler:
+    app.state.cleanup_job_auth_failed = False
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         run_scheduled_cleanup,
@@ -61,6 +66,7 @@ def start_scheduler(app: FastAPI) -> AsyncIOScheduler:
         args=[app],
     )
     if not AuthState.from_disk(app.state.settings).connected:
+        app.state.cleanup_job_auth_failed = True
         scheduler.pause_job("cleanup")
     scheduler.start()
     return scheduler

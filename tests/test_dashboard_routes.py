@@ -295,16 +295,30 @@ def test_run_cleanup_auth_failures_redirect_with_reconnect_message(
     monkeypatch: pytest.MonkeyPatch,
     auth_error: Exception,
 ) -> None:
+    monkeypatch.setattr(
+        "app.web.routes.AuthState.from_disk",
+        lambda settings: AuthState(True),
+    )
+
     async def fake_run_cleanup_once(session, gmail_client, *, triggered_by: str, dry_run: bool = False):
         raise auth_error
 
     monkeypatch.setattr("app.web.routes.run_cleanup_once", fake_run_cleanup_once, raising=False)
+    client.app.state.scheduler.resume_job("cleanup")
 
+    cleanup_job = client.app.state.scheduler.get_job("cleanup")
+    assert cleanup_job is not None
+    assert cleanup_job.next_run_time is not None
     response = client.post("/runs/execute", follow_redirects=False)
 
     assert response.status_code == 303
+    cleanup_job = client.app.state.scheduler.get_job("cleanup")
+    assert cleanup_job is not None
+    assert cleanup_job.next_run_time is None
     follow_up = client.get(response.headers["location"])
     assert "Reconnect Gmail" in follow_up.text
+    dashboard = client.get("/")
+    assert "Reconnect Gmail" in dashboard.text
 
 
 def test_scheduler_is_paused_when_auth_state_is_disconnected(
