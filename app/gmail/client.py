@@ -60,6 +60,16 @@ class GmailClient:
         )
         response.raise_for_status()
 
+    async def apply_action(self, message_id: str, action: str) -> None:
+        if action == "archive":
+            await self.archive_message(message_id)
+            return
+        if action == "trash":
+            await self.trash_message(message_id)
+            return
+        msg = f"Unsupported Gmail cleanup action: {action}"
+        raise ValueError(msg)
+
     async def preview_matches(self, query: str, *, action: str) -> list[RulePreviewMatch]:
         matches: list[RulePreviewMatch] = []
         for message_id in await self.list_message_ids(query):
