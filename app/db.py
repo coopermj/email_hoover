@@ -1,24 +1,31 @@
 from collections.abc import Generator
+from pathlib import Path
+import os
 
 from sqlmodel import Session, SQLModel, create_engine
 
 from .models import Candidate, CleanupRule, RunLog
 
 
-DATABASE_URL = "sqlite:///./email_hoover.db"
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "email_hoover.db"
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
+
+def get_database_url() -> str:
+    return os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
+
+
+def get_engine():
+    database_url = get_database_url()
+    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+    return create_engine(database_url, connect_args=connect_args)
 
 
 def init_db() -> None:
-    SQLModel.metadata.create_all(engine)
+    SQLModel.metadata.create_all(get_engine())
 
 
 def get_session() -> Generator[Session, None, None]:
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         yield session
 
 
@@ -26,7 +33,9 @@ __all__ = [
     "Candidate",
     "CleanupRule",
     "RunLog",
-    "engine",
+    "DEFAULT_DB_PATH",
+    "get_database_url",
+    "get_engine",
     "get_session",
     "init_db",
 ]

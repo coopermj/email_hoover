@@ -22,7 +22,9 @@ def approve_candidate(
         stale_days=stale_days,
         action=action,
     )
+    candidate.status = "approved"
     session.add(rule)
+    session.add(candidate)
     session.commit()
     session.refresh(rule)
     return rule
