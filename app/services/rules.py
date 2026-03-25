@@ -1,4 +1,4 @@
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.gmail.client import GmailClient, RulePreviewMatch
 from app.models.candidate import Candidate
@@ -29,6 +29,12 @@ def approve_candidate(
     action: str,
 ) -> CleanupRule:
     candidate = _get_candidate(session, candidate_id)
+    existing_rule = session.exec(
+        select(CleanupRule).where(CleanupRule.sender_address == candidate.sender_address)
+    ).first()
+    if existing_rule is not None:
+        msg = f"Sender {candidate.sender_address} already has a cleanup rule"
+        raise ValueError(msg)
 
     rule = CleanupRule(
         sender_address=candidate.sender_address,

@@ -1,9 +1,13 @@
 import pytest
+import httpx
 from fastapi.testclient import TestClient
+from pathlib import Path
 from sqlmodel import Session, SQLModel, create_engine
 
 from app import create_app
+from app.config import Settings
 from app.db import get_database_url, get_engine, init_db
+from app.gmail.client import GmailClient
 from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
@@ -87,6 +91,19 @@ def test_approving_missing_candidate_raises_error(session: Session) -> None:
         approve_candidate(session, 999, stale_days=3, action="archive")
 
 
+def test_approving_candidate_twice_raises_controlled_error(session: Session) -> None:
+    candidate = seed_candidate(
+        session,
+        sender_address="duplicate@example.com",
+        sender_name="Duplicate Sender",
+    )
+
+    approve_candidate(session, candidate.id, stale_days=3, action="archive")
+
+    with pytest.raises(ValueError, match="already has a cleanup rule"):
+        approve_candidate(session, candidate.id, stale_days=7, action="trash")
+
+
 @pytest.mark.asyncio
 async def test_preview_rule_matches_returns_stale_messages(
     session: Session,
@@ -109,6 +126,64 @@ async def test_preview_rule_matches_returns_stale_messages(
     assert gmail_client_stub.calls == [("from:preview@example.com older_than:2d", "trash")]
     assert matches[0].message_id == "m-older"
     assert matches[0].planned_action == "trash"
+
+
+@pytest.mark.asyncio
+async def test_gmail_client_preview_matches_returns_message_metadata(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/gmail/v1/users/me/messages":
+            return httpx.Response(200, json={"messages": [{"id": "m1"}, {"id": "m2"}]})
+        if request.url.path == "/gmail/v1/users/me/messages/m1":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "m1",
+                    "threadId": "t1",
+                    "payload": {
+                        "headers": [
+                            {"name": "Subject", "value": "First preview"},
+                        ]
+                    },
+                },
+            )
+        if request.url.path == "/gmail/v1/users/me/messages/m2":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "m2",
+                    "threadId": "t2",
+                    "payload": {
+                        "headers": [
+                            {"name": "Subject", "value": "Second preview"},
+                        ]
+                    },
+                },
+            )
+        return httpx.Response(404)
+
+    settings = Settings(
+        gmail_token_path=tmp_path / "token.json",
+        gmail_base_url="https://gmail.googleapis.com",
+    )
+    client = GmailClient(
+        settings,
+        token_getter=lambda: "token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    try:
+        matches = await client.preview_matches("from:preview@example.com older_than:2d", action="trash")
+    finally:
+        await client.aclose()
+
+    assert [match.message_id for match in matches] == ["m1", "m2"]
+    assert [match.thread_id for match in matches] == ["t1", "t2"]
+    assert [match.subject for match in matches] == ["First preview", "Second preview"]
+    assert [match.planned_action for match in matches] == ["trash", "trash"]
+    assert requests[0].url.params["q"] == "from:preview@example.com older_than:2d"
 
 
 def test_candidate_can_be_rejected_or_postponed(session: Session) -> None:
