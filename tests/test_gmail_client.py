@@ -32,6 +32,14 @@ def test_auth_state_reports_connected_when_token_exists(settings: Settings) -> N
     assert state.reason is None
 
 
+def test_settings_default_gmail_token_path_lives_outside_repo() -> None:
+    default_path = Settings.from_env().gmail_token_path
+    repo_root = Path(__file__).resolve().parents[1]
+
+    assert default_path.is_absolute() is True
+    assert repo_root not in default_path.parents
+
+
 @pytest.mark.asyncio
 async def test_list_candidate_messages_uses_expected_query(settings: Settings) -> None:
     requests: list[httpx.Request] = []
@@ -82,6 +90,7 @@ async def test_get_message_metadata_requests_metadata_format(settings: Settings)
     assert payload == {"id": "m1", "labelIds": ["INBOX"]}
     assert len(requests) == 1
     request = requests[0]
+    assert request.headers["Authorization"] == "Bearer token"
     assert request.url.params["format"] == "metadata"
 
 
@@ -105,7 +114,9 @@ async def test_archive_message_removes_inbox_label(settings: Settings) -> None:
         await client.aclose()
 
     assert len(requests) == 1
-    assert requests[0].content == b'{"removeLabelIds":["INBOX"]}'
+    request = requests[0]
+    assert request.headers["Authorization"] == "Bearer token"
+    assert request.content == b'{"removeLabelIds":["INBOX"]}'
 
 
 @pytest.mark.asyncio
@@ -128,4 +139,6 @@ async def test_trash_message_posts_to_trash_endpoint(settings: Settings) -> None
         await client.aclose()
 
     assert len(requests) == 1
-    assert requests[0].url.path == "/gmail/v1/users/me/messages/m1/trash"
+    request = requests[0]
+    assert request.headers["Authorization"] == "Bearer token"
+    assert request.url.path == "/gmail/v1/users/me/messages/m1/trash"

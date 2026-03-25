@@ -6,7 +6,7 @@ import os
 
 APP_NAME = "email-hoover"
 DEFAULT_GMAIL_BASE_URL = "https://gmail.googleapis.com"
-DEFAULT_GMAIL_TOKEN_PATH = Path(__file__).resolve().parent.parent / ".gmail-token.json"
+DEFAULT_GMAIL_TOKEN_PATH = Path.home() / ".local" / "state" / APP_NAME / "gmail-token.json"
 
 
 def _package_version() -> str:
