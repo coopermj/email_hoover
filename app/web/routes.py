@@ -15,6 +15,7 @@ from app.gmail.client import GmailClient
 from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
+from app.services.executor import is_auth_failure
 from app.services.scheduler import build_gmail_client
 from app.services.executor import run_cleanup_once
 from app.services.rules import approve_candidate, mark_candidate_postponed, mark_candidate_rejected
@@ -144,6 +145,10 @@ def _scheduler_status_message(request: Request) -> str | None:
     return None
 
 
+def _auth_reconnect_message() -> str:
+    return "Reconnect Gmail to resume scheduled cleanup."
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -201,6 +206,10 @@ async def run_cleanup(
 ) -> RedirectResponse:
     try:
         await run_cleanup_once(session, gmail_client, triggered_by="manual", dry_run=False)
-    except ValueError as exc:
+    except Exception as exc:
+        if is_auth_failure(exc):
+            return _redirect_with_error(_auth_reconnect_message())
+        if not isinstance(exc, ValueError):
+            raise
         return _redirect_with_error(str(exc))
     return RedirectResponse("/", status_code=303)

@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 
+import httpx
 from sqlmodel import Session, select
 
 from app.gmail.client import GmailClient
@@ -80,10 +81,10 @@ async def run_cleanup_once(
                         actioned_count=1,
                     )
                 )
+                session.commit()
                 summary.messages_acted_on += 1
         except Exception as exc:
             if is_auth_failure(exc):
-                session.rollback()
                 raise
             session.add(
                 RunLog(
@@ -110,10 +111,14 @@ async def run_cleanup_once(
 
 
 def is_auth_failure(exc: Exception) -> bool:
-    if not isinstance(exc, ValueError):
-        return False
-    message = str(exc).lower()
-    return "token" in message or "auth" in message
+    if isinstance(exc, FileNotFoundError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {401, 403}
+    if isinstance(exc, ValueError):
+        message = str(exc).lower()
+        return "token" in message or "auth" in message
+    return False
 
 
 def _already_processed(session: Session, rule_id: int, message_id: str) -> bool:
@@ -140,6 +145,8 @@ async def _apply_with_retry(
             await _dispatch_action(gmail_client, message_id, action)
             return
         except Exception as exc:  # pragma: no cover - covered via caller behavior
+            if is_auth_failure(exc):
+                raise
             last_error = exc
             if attempt == attempts:
                 break

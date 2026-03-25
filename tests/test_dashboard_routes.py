@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import httpx
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import select
@@ -272,7 +273,38 @@ def test_run_cleanup_value_error_redirects_with_operator_message(
 
     assert response.status_code == 303
     follow_up = client.get(response.headers["location"])
-    assert "Gmail token missing" in follow_up.text
+    assert "Reconnect Gmail" in follow_up.text
+
+
+@pytest.mark.parametrize(
+    "auth_error",
+    [
+        FileNotFoundError("/tmp/gmail-token.json"),
+        httpx.HTTPStatusError(
+            "401 Unauthorized",
+            request=httpx.Request("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages"),
+            response=httpx.Response(
+                401,
+                request=httpx.Request("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages"),
+            ),
+        ),
+    ],
+)
+def test_run_cleanup_auth_failures_redirect_with_reconnect_message(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_error: Exception,
+) -> None:
+    async def fake_run_cleanup_once(session, gmail_client, *, triggered_by: str, dry_run: bool = False):
+        raise auth_error
+
+    monkeypatch.setattr("app.web.routes.run_cleanup_once", fake_run_cleanup_once, raising=False)
+
+    response = client.post("/runs/execute", follow_redirects=False)
+
+    assert response.status_code == 303
+    follow_up = client.get(response.headers["location"])
+    assert "Reconnect Gmail" in follow_up.text
 
 
 def test_scheduler_is_paused_when_auth_state_is_disconnected(

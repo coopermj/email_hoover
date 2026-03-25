@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -71,6 +72,33 @@ class MissingTokenGmailClientStub(GmailClientStub):
         raise ValueError("Gmail token missing")
 
 
+class MissingTokenFileGmailClientStub(GmailClientStub):
+    async def preview_matches(self, query: str, *, action: str):
+        raise FileNotFoundError("/tmp/gmail-token.json")
+
+
+class GmailAuthHTTPFailureStub(GmailClientStub):
+    def __init__(self) -> None:
+        super().__init__()
+        self.archive_attempts: list[str] = []
+
+    async def archive_message(self, message_id: str) -> None:
+        self.archive_attempts.append(message_id)
+        raise _gmail_auth_http_error()
+
+
+class MidRunAuthFailureGmailClientStub(GmailClientStub):
+    def __init__(self) -> None:
+        super().__init__()
+        self.archive_attempts: list[str] = []
+
+    async def archive_message(self, message_id: str) -> None:
+        self.archive_attempts.append(message_id)
+        if message_id == "m-2":
+            raise FileNotFoundError("/tmp/gmail-token.json")
+        await super().archive_message(message_id)
+
+
 @pytest.fixture
 def gmail_client_stub() -> GmailClientStub:
     return GmailClientStub()
@@ -84,6 +112,21 @@ def flaky_gmail_client_stub() -> FlakyGmailClientStub:
 @pytest.fixture
 def missing_token_gmail_client_stub() -> MissingTokenGmailClientStub:
     return MissingTokenGmailClientStub()
+
+
+@pytest.fixture
+def missing_token_file_gmail_client_stub() -> MissingTokenFileGmailClientStub:
+    return MissingTokenFileGmailClientStub()
+
+
+@pytest.fixture
+def gmail_auth_http_failure_stub() -> GmailAuthHTTPFailureStub:
+    return GmailAuthHTTPFailureStub()
+
+
+@pytest.fixture
+def mid_run_auth_failure_gmail_client_stub() -> MidRunAuthFailureGmailClientStub:
+    return MidRunAuthFailureGmailClientStub()
 
 
 def seed_rule(
@@ -104,6 +147,12 @@ def seed_rule(
     session.commit()
     session.refresh(candidate)
     return approve_candidate(session, candidate.id, stale_days=stale_days, action=action)
+
+
+def _gmail_auth_http_error() -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://gmail.googleapis.com/gmail/v1/users/me/messages/m-1/modify")
+    response = httpx.Response(401, request=request)
+    return httpx.HTTPStatusError("401 Unauthorized", request=request, response=response)
 
 
 @pytest.mark.asyncio
@@ -262,3 +311,89 @@ async def test_executor_bubbles_auth_failures_without_pausing_rule(
     session.refresh(rule)
     assert rule.pause_reason is None
     assert session.exec(select(RunLog)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_executor_bubbles_missing_token_file_failures_without_pausing_rule(
+    session: Session,
+    missing_token_file_gmail_client_stub: MissingTokenFileGmailClientStub,
+) -> None:
+    from app.services.executor import run_cleanup_once
+
+    rule = seed_rule(
+        session,
+        sender_address="missing-file@example.com",
+        sender_name="Missing File Sender",
+        action="archive",
+    )
+
+    with pytest.raises(FileNotFoundError, match="gmail-token.json"):
+        await run_cleanup_once(session, missing_token_file_gmail_client_stub, triggered_by="scheduled")
+
+    session.refresh(rule)
+    assert rule.pause_reason is None
+    assert session.exec(select(RunLog)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_executor_bubbles_gmail_auth_http_failures_without_pausing_rule(
+    session: Session,
+    gmail_auth_http_failure_stub: GmailAuthHTTPFailureStub,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.executor import run_cleanup_once
+    import app.services.executor as executor_module
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(executor_module.asyncio, "sleep", fake_sleep)
+
+    rule = seed_rule(
+        session,
+        sender_address="http-auth@example.com",
+        sender_name="HTTP Auth Sender",
+        action="archive",
+    )
+
+    with pytest.raises(httpx.HTTPStatusError, match="401 Unauthorized"):
+        await run_cleanup_once(session, gmail_auth_http_failure_stub, triggered_by="scheduled")
+
+    session.refresh(rule)
+    assert rule.pause_reason is None
+    assert gmail_auth_http_failure_stub.archive_attempts == ["m-1"]
+    assert sleeps == []
+    assert session.exec(select(RunLog)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_executor_preserves_audit_logs_when_auth_fails_mid_run(
+    session: Session,
+    mid_run_auth_failure_gmail_client_stub: MidRunAuthFailureGmailClientStub,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.executor import run_cleanup_once
+    import app.services.executor as executor_module
+
+    async def fake_sleep(delay: float) -> None:
+        raise AssertionError(f"unexpected retry backoff: {delay}")
+
+    monkeypatch.setattr(executor_module.asyncio, "sleep", fake_sleep)
+
+    seed_rule(
+        session,
+        sender_address="mid-run-auth@example.com",
+        sender_name="Mid Run Auth Sender",
+        action="archive",
+    )
+
+    with pytest.raises(FileNotFoundError, match="gmail-token.json"):
+        await run_cleanup_once(session, mid_run_auth_failure_gmail_client_stub, triggered_by="scheduled")
+
+    logs = session.exec(select(RunLog).where(RunLog.action == "archive")).all()
+    assert [log.message_id for log in logs] == ["m-1"]
+    assert all(log.status == "completed" for log in logs)
+    assert mid_run_auth_failure_gmail_client_stub.archived == ["m-1"]
+    assert mid_run_auth_failure_gmail_client_stub.archive_attempts == ["m-1", "m-2"]
