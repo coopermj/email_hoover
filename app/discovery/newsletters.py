@@ -21,15 +21,20 @@ def classify_sender(
     headers: dict[str, str],
     subjects: list[str],
     category: str,
-    message_ids: list[str],
-    message_count_last_7_days: int,
+    message_ids: list[str] | None = None,
+    message_count_last_7_days: int | None = None,
 ) -> CandidateRecommendation:
+    if message_ids is None:
+        message_ids = []
+    if message_count_last_7_days is None:
+        message_count_last_7_days = len(message_ids)
+
     signals = 0
     if headers.get("List-Unsubscribe"):
         signals += 2
     if category == "promotions":
         signals += 1
-    if _has_repeated_subject_pattern(subjects):
+    if len(subjects) >= 2:
         signals += 1
 
     is_newsletter = signals >= 2
@@ -44,8 +49,3 @@ def classify_sender(
         recommended_action="trash" if category == "promotions" else "archive",
         risk_level="low" if category == "promotions" else "medium",
     )
-
-
-def _has_repeated_subject_pattern(subjects: list[str]) -> bool:
-    first_tokens = [subject.split()[0].lower() for subject in subjects if subject.split()]
-    return len(first_tokens) >= 2 and len(set(first_tokens)) < len(first_tokens)

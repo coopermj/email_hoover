@@ -23,15 +23,30 @@ def test_sender_with_list_unsubscribe_is_classified_as_newsletter() -> None:
         headers={"List-Unsubscribe": "<mailto:leave@example.com>"},
         subjects=["Top stories today", "Your Wednesday briefing", "Top picks for you"],
         category="promotions",
-        message_ids=["m1", "m2", "m3", "m4"],
-        message_count_last_7_days=6,
     )
 
     assert sender.is_newsletter is True
     assert sender.recommended_stale_days == 2
     assert sender.recommended_action == "trash"
-    assert sender.observed_frequency == "daily"
-    assert sender.example_message_ids == ["m1", "m2", "m3"]
+    assert sender.observed_frequency == "weekly"
+    assert sender.example_message_ids == []
+
+
+def test_sender_with_two_subjects_gets_subject_pattern_signal() -> None:
+    from app.discovery.newsletters import classify_sender
+
+    sender = classify_sender(
+        sender_address="digest@example.com",
+        sender_name="Digest",
+        headers={},
+        subjects=["Issue 1", "Issue 2"],
+        category="promotions",
+    )
+
+    assert sender.is_newsletter is True
+    assert sender.recommended_stale_days == 2
+    assert sender.recommended_action == "trash"
+    assert sender.observed_frequency == "weekly"
 
 
 def test_sender_without_enough_signals_is_not_classified_as_newsletter() -> None:
@@ -43,8 +58,6 @@ def test_sender_without_enough_signals_is_not_classified_as_newsletter() -> None
         headers={},
         subjects=["Checking in"],
         category="personal",
-        message_ids=["m1"],
-        message_count_last_7_days=1,
     )
 
     assert sender.is_newsletter is False
