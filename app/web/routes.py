@@ -1,5 +1,7 @@
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -18,6 +20,14 @@ from app.services.rules import approve_candidate, mark_candidate_postponed, mark
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
+ALLOWED_ACTIONS = {"archive", "trash"}
+
+
+@dataclass(slots=True)
+class ActivityEntry:
+    heading: str
+    status: str
+    detail: str
 
 
 def _read_gmail_token() -> str:
@@ -55,6 +65,10 @@ def list_recent_runs(session: Session) -> list[RunLog]:
     return list(session.exec(statement).all())
 
 
+def list_recent_activity(session: Session) -> list[ActivityEntry]:
+    return [_to_activity_entry(run) for run in list_recent_runs(session)]
+
+
 def list_paused_rules(session: Session) -> list[CleanupRule]:
     statement = (
         select(CleanupRule)
@@ -62,6 +76,56 @@ def list_paused_rules(session: Session) -> list[CleanupRule]:
         .order_by(CleanupRule.sender_name, CleanupRule.sender_address)
     )
     return list(session.exec(statement).all())
+
+
+def _to_activity_entry(run: RunLog) -> ActivityEntry:
+    if run.status == "completed":
+        action_count = run.actioned_count or 1
+        noun = "action" if action_count == 1 else "actions"
+        message_suffix = f" for message {run.message_id}" if run.message_id else ""
+        return ActivityEntry(
+            heading=f"{run.triggered_by} cleanup event",
+            status="completed",
+            detail=f"{action_count} {noun} applied via {run.action}{message_suffix}.",
+        )
+    if run.status == "planned":
+        match_count = run.matched_count or 1
+        noun = "message" if match_count == 1 else "messages"
+        return ActivityEntry(
+            heading=f"{run.triggered_by} dry-run event",
+            status="planned",
+            detail=f"{match_count} {noun} queued for {run.action}.",
+        )
+    if run.status == "paused":
+        reason = run.error_message or "pause requested"
+        return ActivityEntry(
+            heading=f"{run.triggered_by} pause event",
+            status="paused",
+            detail=f"Rule paused because {reason}.",
+        )
+    if run.status == "error":
+        return ActivityEntry(
+            heading=f"{run.triggered_by} error event",
+            status="error",
+            detail=run.error_message or "Cleanup failed before an action was applied.",
+        )
+    return ActivityEntry(
+        heading=f"{run.triggered_by} cleanup event",
+        status=run.status,
+        detail=f"Recorded action {run.action}.",
+    )
+
+
+def _redirect_with_error(message: str) -> RedirectResponse:
+    return RedirectResponse(f"/?{urlencode({'error': message})}", status_code=303)
+
+
+def _validate_approval_inputs(stale_days: int, action: str) -> str | None:
+    if stale_days < 1:
+        return "Stale days must be at least 1."
+    if action not in ALLOWED_ACTIONS:
+        return "Action must be archive or trash."
+    return None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -72,8 +136,9 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
         {
             "candidates": list_pending_candidates(session),
             "rules": list_rules(session),
-            "recent_runs": list_recent_runs(session),
+            "recent_activity": list_recent_activity(session),
             "exceptions": list_paused_rules(session),
+            "error_message": request.query_params.get("error"),
         },
     )
 
@@ -85,19 +150,31 @@ def approve_rule(
     action: str = Form(...),
     session: Session = Depends(get_session),
 ) -> RedirectResponse:
-    approve_candidate(session, candidate_id, stale_days=stale_days, action=action)
+    validation_error = _validate_approval_inputs(stale_days, action)
+    if validation_error is not None:
+        return _redirect_with_error(validation_error)
+    try:
+        approve_candidate(session, candidate_id, stale_days=stale_days, action=action)
+    except ValueError as exc:
+        return _redirect_with_error(str(exc))
     return RedirectResponse("/", status_code=303)
 
 
 @router.post("/candidates/{candidate_id}/reject")
 def reject_candidate(candidate_id: int, session: Session = Depends(get_session)) -> RedirectResponse:
-    mark_candidate_rejected(session, candidate_id)
+    try:
+        mark_candidate_rejected(session, candidate_id)
+    except ValueError as exc:
+        return _redirect_with_error(str(exc))
     return RedirectResponse("/", status_code=303)
 
 
 @router.post("/candidates/{candidate_id}/postpone")
 def postpone_candidate(candidate_id: int, session: Session = Depends(get_session)) -> RedirectResponse:
-    mark_candidate_postponed(session, candidate_id)
+    try:
+        mark_candidate_postponed(session, candidate_id)
+    except ValueError as exc:
+        return _redirect_with_error(str(exc))
     return RedirectResponse("/", status_code=303)
 
 
@@ -106,5 +183,8 @@ async def run_cleanup(
     session: Session = Depends(get_session),
     gmail_client: GmailClient = Depends(get_gmail_client),
 ) -> RedirectResponse:
-    await run_cleanup_once(session, gmail_client, triggered_by="manual", dry_run=False)
+    try:
+        await run_cleanup_once(session, gmail_client, triggered_by="manual", dry_run=False)
+    except ValueError as exc:
+        return _redirect_with_error(str(exc))
     return RedirectResponse("/", status_code=303)

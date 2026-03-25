@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy.pool import StaticPool
+from sqlmodel import select
 from sqlmodel import Session, SQLModel, create_engine
 
 from app import create_app
@@ -91,7 +92,9 @@ def test_dashboard_renders_candidates_rules_and_run_log(client: TestClient, sess
     assert "Pending Sender" in response.text
     assert "Rule Sender" in response.text
     assert "Paused Sender" in response.text
-    assert "completed" in response.text
+    assert "Recent Cleanup Activity" in response.text
+    assert "manual cleanup event" in response.text
+    assert "2 actions applied" in response.text
 
 
 def test_approve_rule_action_redirects_back_to_dashboard(client: TestClient, session: Session) -> None:
@@ -113,6 +116,89 @@ def test_approve_rule_action_redirects_back_to_dashboard(client: TestClient, ses
 
     assert response.status_code == 303
     assert response.headers["location"] == "/"
+
+
+@pytest.mark.parametrize(
+    ("stale_days", "action", "expected_message"),
+    [
+        (0, "trash", "Stale days must be at least 1."),
+        (-3, "archive", "Stale days must be at least 1."),
+        (2, "delete", "Action must be archive or trash."),
+    ],
+)
+def test_approve_rule_validation_errors_redirect_with_operator_message(
+    client: TestClient,
+    session: Session,
+    stale_days: int,
+    action: str,
+    expected_message: str,
+) -> None:
+    candidate = Candidate(
+        sender_address="invalid@example.com",
+        sender_name="Invalid Sender",
+        recommended_stale_days=2,
+        recommended_action="trash",
+    )
+    session.add(candidate)
+    session.commit()
+    session.refresh(candidate)
+
+    response = client.post(
+        "/rules/approve",
+        data={"candidate_id": candidate.id, "stale_days": stale_days, "action": action},
+        follow_redirects=False,
+    )
+
+    session.refresh(candidate)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/?error=")
+    follow_up = client.get(response.headers["location"])
+    assert expected_message in follow_up.text
+    assert candidate.status == "pending"
+    assert session.exec(select(CleanupRule)).all() == []
+
+
+def test_approve_rule_duplicate_sender_redirects_with_operator_message(
+    client: TestClient,
+    session: Session,
+) -> None:
+    first = Candidate(
+        sender_address="duplicate@example.com",
+        sender_name="First Duplicate",
+        recommended_stale_days=2,
+        recommended_action="trash",
+    )
+    second = Candidate(
+        sender_address="duplicate@example.com",
+        sender_name="Second Duplicate",
+        recommended_stale_days=3,
+        recommended_action="archive",
+    )
+    session.add(first)
+    session.add(second)
+    session.commit()
+    session.refresh(first)
+    session.refresh(second)
+
+    first_response = client.post(
+        "/rules/approve",
+        data={"candidate_id": first.id, "stale_days": 2, "action": "trash"},
+        follow_redirects=False,
+    )
+    duplicate_response = client.post(
+        "/rules/approve",
+        data={"candidate_id": second.id, "stale_days": 3, "action": "archive"},
+        follow_redirects=False,
+    )
+
+    session.refresh(second)
+
+    assert first_response.status_code == 303
+    assert duplicate_response.status_code == 303
+    follow_up = client.get(duplicate_response.headers["location"])
+    assert "already has a cleanup rule" in follow_up.text
+    assert second.status == "pending"
 
 
 def test_reject_and_postpone_actions_redirect_back_to_dashboard(
@@ -144,6 +230,16 @@ def test_reject_and_postpone_actions_redirect_back_to_dashboard(
     assert postpone_response.status_code == 303
 
 
+def test_reject_and_postpone_value_errors_redirect_with_operator_message(client: TestClient) -> None:
+    reject_response = client.post("/candidates/999/reject", follow_redirects=False)
+    postpone_response = client.post("/candidates/1000/postpone", follow_redirects=False)
+
+    assert reject_response.status_code == 303
+    assert postpone_response.status_code == 303
+    assert "Candidate 999 does not exist" in client.get(reject_response.headers["location"]).text
+    assert "Candidate 1000 does not exist" in client.get(postpone_response.headers["location"]).text
+
+
 def test_run_cleanup_now_triggers_manual_execution(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -160,3 +256,19 @@ def test_run_cleanup_now_triggers_manual_execution(
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     assert calls == [("manual", False)]
+
+
+def test_run_cleanup_value_error_redirects_with_operator_message(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_run_cleanup_once(session, gmail_client, *, triggered_by: str, dry_run: bool = False):
+        raise ValueError("Gmail token missing")
+
+    monkeypatch.setattr("app.web.routes.run_cleanup_once", fake_run_cleanup_once, raising=False)
+
+    response = client.post("/runs/execute", follow_redirects=False)
+
+    assert response.status_code == 303
+    follow_up = client.get(response.headers["location"])
+    assert "Gmail token missing" in follow_up.text

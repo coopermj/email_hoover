@@ -61,6 +61,15 @@
             color: var(--muted);
         }
 
+        .banner {
+            margin-bottom: 1rem;
+            padding: 0.9rem 1rem;
+            border: 1px solid #d7a08f;
+            border-radius: 12px;
+            background: #fff1ea;
+            color: #7c2d12;
+        }
+
         .layout {
             display: grid;
             grid-template-columns: 1.15fr 1fr;
@@ -150,6 +159,9 @@
 </head>
 <body>
     <div class="shell">
+        {% if error_message %}
+        <div class="banner" role="alert">{{ error_message }}</div>
+        {% endif %}
         {% block content %}{% endblock %}
     </div>
 </body>

@@ -1,20 +1,18 @@
 <section class="panel">
-    <h2>Recent Runs</h2>
-    {% if recent_runs %}
+    <h2>Recent Cleanup Activity</h2>
+    {% if recent_activity %}
     <ul class="list">
-        {% for run in recent_runs %}
+        {% for item in recent_activity %}
         <li>
             <div class="card-title">
-                <span>{{ run.status }}</span>
-                <span class="muted">{{ run.triggered_by }}</span>
+                <span>{{ item.heading }}</span>
+                <span class="muted">{{ item.status }}</span>
             </div>
-            <p class="muted">
-                matched={{ run.matched_count }} actioned={{ run.actioned_count }} action={{ run.action }}
-            </p>
+            <p class="muted">{{ item.detail }}</p>
         </li>
         {% endfor %}
     </ul>
     {% else %}
-    <p class="empty">No runs recorded yet.</p>
+    <p class="empty">No cleanup activity recorded yet.</p>
     {% endif %}
 </section>
