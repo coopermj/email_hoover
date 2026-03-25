@@ -1,0 +1,20 @@
+<section class="panel">
+    <h2>Recent Runs</h2>
+    {% if recent_runs %}
+    <ul class="list">
+        {% for run in recent_runs %}
+        <li>
+            <div class="card-title">
+                <span>{{ run.status }}</span>
+                <span class="muted">{{ run.triggered_by }}</span>
+            </div>
+            <p class="muted">
+                matched={{ run.matched_count }} actioned={{ run.actioned_count }} action={{ run.action }}
+            </p>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">No runs recorded yet.</p>
+    {% endif %}
+</section>

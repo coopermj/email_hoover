@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Operator Console{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div>
+        <p class="muted">Operator Console</p>
+        <h1>Review Candidates / Active Rules / Recent Runs / Exceptions</h1>
+        <p>Review newly discovered senders, approve cleanup rules, and inspect recent execution state.</p>
+    </div>
+    <form method="post" action="/runs/execute">
+        <button type="submit">Run Cleanup Now</button>
+    </form>
+</section>
+
+<div class="layout">
+    <section class="stack">
+        {% include "partials/candidate_list.html" %}
+        {% include "partials/exceptions.html" %}
+    </section>
+    <main class="stack">
+        {% include "partials/rule_editor.html" %}
+        {% include "partials/run_log.html" %}
+    </main>
+</div>
+{% endblock %}

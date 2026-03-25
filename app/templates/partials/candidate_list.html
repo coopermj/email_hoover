@@ -1,0 +1,47 @@
+<section class="panel">
+    <h2>Review Candidates</h2>
+    {% if candidates %}
+    <ul class="list">
+        {% for candidate in candidates %}
+        <li>
+            <div class="card-title">
+                <span>{{ candidate.sender_name }}</span>
+                <span class="muted">{{ candidate.sender_address }}</span>
+            </div>
+            <p class="muted">
+                Recommended: {{ candidate.recommended_action }} after {{ candidate.recommended_stale_days }} days.
+            </p>
+            <form method="post" action="/rules/approve">
+                <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
+                <div class="form-row">
+                    <label>
+                        Stale Days
+                        <input type="number" min="1" name="stale_days" value="{{ candidate.recommended_stale_days }}">
+                    </label>
+                    <label>
+                        Action
+                        <select name="action">
+                            <option value="trash" {% if candidate.recommended_action == "trash" %}selected{% endif %}>trash</option>
+                            <option value="archive" {% if candidate.recommended_action == "archive" %}selected{% endif %}>archive</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="actions">
+                    <button type="submit">Approve Rule</button>
+                </div>
+            </form>
+            <div class="actions">
+                <form method="post" action="/candidates/{{ candidate.id }}/reject">
+                    <button type="submit" class="secondary">Reject</button>
+                </form>
+                <form method="post" action="/candidates/{{ candidate.id }}/postpone">
+                    <button type="submit" class="secondary">Postpone</button>
+                </form>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">No pending candidates.</p>
+    {% endif %}
+</section>

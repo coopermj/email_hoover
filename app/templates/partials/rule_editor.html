@@ -1,0 +1,18 @@
+<section class="panel">
+    <h2>Active Rules</h2>
+    {% if rules %}
+    <ul class="list">
+        {% for rule in rules %}
+        <li>
+            <div class="card-title">
+                <span>{{ rule.sender_name }}</span>
+                <span class="muted">{{ rule.sender_address }}</span>
+            </div>
+            <p class="muted">{{ rule.action }} messages older than {{ rule.stale_days }} days.</p>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">No approved rules yet.</p>
+    {% endif %}
+</section>

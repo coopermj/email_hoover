@@ -1,0 +1,18 @@
+<section class="panel">
+    <h2>Exceptions</h2>
+    {% if exceptions %}
+    <ul class="list">
+        {% for rule in exceptions %}
+        <li>
+            <div class="card-title">
+                <span>{{ rule.sender_name }}</span>
+                <span class="muted">{{ rule.sender_address }}</span>
+            </div>
+            <p class="muted">Paused because: {{ rule.pause_reason }}</p>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">No paused rules.</p>
+    {% endif %}
+</section>
