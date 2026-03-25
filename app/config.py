@@ -9,6 +9,7 @@ DEFAULT_GMAIL_BASE_URL = "https://gmail.googleapis.com"
 DEFAULT_GMAIL_TOKEN_PATH = Path.home() / ".local" / "state" / APP_NAME / "gmail-token.json"
 DEFAULT_GOOGLE_REDIRECT_URI = "http://127.0.0.1:8765/auth/google/callback"
 GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+DEFAULT_SESSION_SECRET = "email-hoover-dev-session-secret"
 
 
 def _package_version() -> str:
@@ -30,6 +31,7 @@ class Settings:
     google_credentials_path: Path | None = None
     google_redirect_uri: str = DEFAULT_GOOGLE_REDIRECT_URI
     gmail_scopes: tuple[str, ...] = (GMAIL_MODIFY_SCOPE,)
+    session_secret: str = DEFAULT_SESSION_SECRET
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -41,4 +43,5 @@ class Settings:
             google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
             google_credentials_path=Path(google_credentials_path) if google_credentials_path else None,
             google_redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", DEFAULT_GOOGLE_REDIRECT_URI),
+            session_secret=os.getenv("SESSION_SECRET", DEFAULT_SESSION_SECRET),
         )

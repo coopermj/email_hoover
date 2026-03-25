@@ -11,7 +11,7 @@ from .web import router as web_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.settings = Settings.from_env()
+    app.state.settings = getattr(app.state, "settings", Settings.from_env())
     app.state.engine = get_engine()
     init_db()
     app.state.scheduler = start_scheduler(app)
@@ -24,7 +24,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    settings = Settings.from_env()
     app = FastAPI(title=APP_NAME, version=APP_VERSION, lifespan=lifespan)
+    app.state.settings = settings
 
     @app.get("/health")
     def healthcheck() -> dict[str, str]:

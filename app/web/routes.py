@@ -12,6 +12,12 @@ from app.config import Settings
 from app.db import get_session
 from app.gmail.auth import AuthState
 from app.gmail.client import GmailClient
+from app.gmail.oauth import (
+    build_google_authorization_redirect,
+    create_oauth_state_token,
+    exchange_google_code,
+    write_gmail_credentials,
+)
 from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
@@ -24,6 +30,7 @@ from app.services.rules import approve_candidate, mark_candidate_postponed, mark
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 ALLOWED_ACTIONS = {"archive", "trash"}
+OAUTH_STATE_COOKIE = "email_hoover_oauth_state"
 
 
 @dataclass(slots=True)
@@ -154,6 +161,7 @@ def _auth_reconnect_message() -> str:
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    auth_state = AuthState.from_disk(getattr(request.app.state, "settings", Settings.from_env()))
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -162,9 +170,52 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
             "rules": list_rules(session),
             "recent_activity": list_recent_activity(session),
             "exceptions": list_paused_rules(session),
+            "auth_connected": auth_state.connected,
             "error_message": _scheduler_status_message(request),
         },
     )
+
+
+@router.get("/auth/google/start")
+def start_google_oauth(request: Request) -> RedirectResponse:
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    state_token = create_oauth_state_token()
+    redirect_url = build_google_authorization_redirect(settings, state_token)
+    response = RedirectResponse(redirect_url)
+    response.set_cookie(
+        OAUTH_STATE_COOKIE,
+        state_token,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+@router.get("/auth/google/callback")
+def complete_google_oauth(request: Request) -> RedirectResponse:
+    expected_state = request.cookies.get(OAUTH_STATE_COOKIE)
+    returned_state = request.query_params.get("state")
+    if expected_state is None or returned_state != expected_state:
+        return _redirect_with_error("Google OAuth state validation failed.")
+
+    provider_error = request.query_params.get("error")
+    if provider_error is not None:
+        return _redirect_with_error(f"Google OAuth failed: {provider_error}")
+
+    code = request.query_params.get("code")
+    if not code:
+        return _redirect_with_error("Google OAuth callback did not include an authorization code.")
+
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    try:
+        credential_payload = exchange_google_code(settings, code)
+        write_gmail_credentials(settings.gmail_token_path, credential_payload)
+    except ValueError as exc:
+        return _redirect_with_error(str(exc))
+
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie(OAUTH_STATE_COOKIE)
+    return response
 
 
 @router.post("/rules/approve")

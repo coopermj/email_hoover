@@ -9,9 +9,17 @@
         <h1>Review Candidates / Active Rules / Recent Runs / Exceptions</h1>
         <p>Review newly discovered senders, approve cleanup rules, and inspect recent cleanup activity.</p>
     </div>
-    <form method="post" action="/runs/execute">
-        <button type="submit">Run Cleanup Now</button>
-    </form>
+    <div class="actions">
+        {% if auth_connected %}
+        <form method="post" action="/runs/execute">
+            <button type="submit">Run Cleanup Now</button>
+        </form>
+        {% else %}
+        <form method="get" action="/auth/google/start">
+            <button type="submit">Connect Gmail</button>
+        </form>
+        {% endif %}
+    </div>
 </section>
 
 <div class="layout">

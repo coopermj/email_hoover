@@ -1,3 +1,6 @@
+from pathlib import Path
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 import httpx
 import pytest
@@ -7,6 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app import create_app
 from app.gmail.auth import AuthState
+from app.gmail.oauth import read_gmail_credentials
 from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
@@ -89,7 +93,7 @@ def test_dashboard_renders_candidates_rules_and_run_log(client: TestClient, sess
 
     assert response.status_code == 200
     assert "Review Candidates" in response.text
-    assert "Run Cleanup Now" in response.text
+    assert "Connect Gmail" in response.text
     assert "Exceptions" in response.text
     assert "Pending Sender" in response.text
     assert "Rule Sender" in response.text
@@ -97,6 +101,71 @@ def test_dashboard_renders_candidates_rules_and_run_log(client: TestClient, sess
     assert "Recent Cleanup Activity" in response.text
     assert "manual cleanup event" in response.text
     assert "2 actions applied" in response.text
+
+
+def test_dashboard_shows_connect_button_when_gmail_disconnected(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Connect Gmail" in response.text
+
+
+def test_oauth_start_redirects_to_google_and_sets_state_cookie(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
+        assert state_token
+        return "https://accounts.google.com/o/oauth2/v2/auth?state=fake-state"
+
+    monkeypatch.setattr(
+        "app.web.routes.build_google_authorization_redirect",
+        fake_build_google_authorization_redirect,
+    )
+
+    response = client.get("/auth/google/start", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"].startswith("https://accounts.google.com/")
+    assert "email_hoover_oauth_state=" in response.headers["set-cookie"]
+
+
+def test_oauth_callback_persists_credentials_and_redirects_home(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_path = tmp_path / "gmail-token.json"
+    client.app.state.settings = replace(client.app.state.settings, gmail_token_path=token_path)
+
+    def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
+        return f"https://accounts.google.com/o/oauth2/v2/auth?state={state_token}"
+
+    def fake_exchange_google_code(settings, code: str) -> dict[str, object]:
+        assert code == "abc"
+        return {
+            "token": "access-token",
+            "refresh_token": "refresh-token",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+            "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+        }
+
+    monkeypatch.setattr(
+        "app.web.routes.build_google_authorization_redirect",
+        fake_build_google_authorization_redirect,
+    )
+    monkeypatch.setattr("app.web.routes.exchange_google_code", fake_exchange_google_code)
+
+    start_response = client.get("/auth/google/start", follow_redirects=False)
+    state = start_response.headers["location"].split("state=")[1]
+
+    response = client.get(f"/auth/google/callback?state={state}&code=abc", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert read_gmail_credentials(token_path)["refresh_token"] == "refresh-token"
 
 
 def test_approve_rule_action_redirects_back_to_dashboard(client: TestClient, session: Session) -> None:

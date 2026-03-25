@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import secrets
 
+from google_auth_oauthlib.flow import Flow
 from app.config import Settings
 
 
@@ -51,3 +53,48 @@ def has_refreshable_credentials(path: Path) -> bool:
 
     required_keys = {"refresh_token", "token_uri", "client_id", "client_secret", "scopes"}
     return required_keys.issubset(payload)
+
+
+def create_oauth_state_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def build_google_authorization_redirect(settings: Settings, state_token: str) -> str:
+    config = load_google_oauth_config(settings)
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": config.client_id,
+                "client_secret": config.client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=config.scopes,
+        redirect_uri=config.redirect_uri,
+    )
+    authorization_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+        state=state_token,
+    )
+    return authorization_url
+
+
+def exchange_google_code(settings: Settings, code: str) -> dict[str, object]:
+    config = load_google_oauth_config(settings)
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": config.client_id,
+                "client_secret": config.client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=config.scopes,
+        redirect_uri=config.redirect_uri,
+    )
+    flow.fetch_token(code=code)
+    return json.loads(flow.credentials.to_json())
