@@ -1,7 +1,9 @@
 from collections.abc import Generator
+from functools import lru_cache
 from pathlib import Path
 import os
 
+from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
 from .models import Candidate, CleanupRule, RunLog
@@ -14,7 +16,8 @@ def get_database_url() -> str:
     return os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
 
 
-def get_engine():
+@lru_cache(maxsize=1)
+def get_engine() -> Engine:
     database_url = get_database_url()
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     return create_engine(database_url, connect_args=connect_args)

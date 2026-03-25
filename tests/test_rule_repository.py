@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
 from app import create_app
-from app.db import get_database_url
+from app.db import get_database_url, get_engine, init_db
 from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
@@ -35,6 +35,8 @@ def test_approving_candidate_creates_rule(session: Session) -> None:
     assert rule.sender_address == "newsletter@example.com"
     assert rule.stale_days == 3
     assert rule.action == "archive"
+    assert rule.created_at is not None
+    assert rule.last_executed_at is None
     session.refresh(candidate)
     assert candidate.status == "approved"
 
@@ -73,7 +75,7 @@ def test_create_app_lifespan_creates_tables(tmp_path: pytest.TempPathFactory, mo
     app = create_app()
 
     with TestClient(app):
-        with Session(create_engine(get_database_url())) as session:
+        with Session(get_engine()) as session:
             candidate = Candidate(
                 sender_address="startup@example.com",
                 sender_name="Startup Sender",
@@ -85,3 +87,29 @@ def test_create_app_lifespan_creates_tables(tmp_path: pytest.TempPathFactory, mo
             session.refresh(candidate)
 
             assert candidate.id is not None
+
+
+def test_get_engine_reuses_cached_engine_for_process(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    database_path = tmp_path / "cached-engine.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    get_engine.cache_clear()
+
+    first_engine = get_engine()
+    second_engine = get_engine()
+
+    assert first_engine is second_engine
+
+    init_db()
+
+    with Session(get_engine()) as session:
+        candidate = Candidate(
+            sender_address="cached@example.com",
+            sender_name="Cached Engine",
+            recommended_stale_days=5,
+            recommended_action="archive",
+        )
+        session.add(candidate)
+        session.commit()
+        session.refresh(candidate)
+
+        assert candidate.id is not None
