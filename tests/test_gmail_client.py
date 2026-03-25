@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.config import Settings
+from app.config import DEFAULT_GMAIL_TOKEN_PATH, Settings
 from app.gmail.auth import AuthState
 from app.gmail.client import GmailClient
 
@@ -32,11 +32,13 @@ def test_auth_state_reports_connected_when_token_exists(settings: Settings) -> N
     assert state.reason is None
 
 
-def test_settings_default_gmail_token_path_lives_outside_repo() -> None:
+def test_settings_default_gmail_token_path_lives_outside_repo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GMAIL_TOKEN_PATH", raising=False)
     default_path = Settings.from_env().gmail_token_path
     repo_root = Path(__file__).resolve().parents[1]
 
     assert default_path.is_absolute() is True
+    assert default_path == DEFAULT_GMAIL_TOKEN_PATH
     assert repo_root not in default_path.parents
 
 
