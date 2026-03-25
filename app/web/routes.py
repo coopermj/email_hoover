@@ -22,7 +22,12 @@ from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
 from app.services.executor import is_auth_failure
-from app.services.scheduler import AUTH_RECONNECT_MESSAGE, build_gmail_client, pause_cleanup_job
+from app.services.scheduler import (
+    AUTH_RECONNECT_MESSAGE,
+    build_gmail_client,
+    pause_cleanup_job,
+    resume_cleanup_job,
+)
 from app.services.executor import run_cleanup_once
 from app.services.rules import approve_candidate, mark_candidate_postponed, mark_candidate_rejected
 
@@ -213,6 +218,7 @@ def complete_google_oauth(request: Request) -> RedirectResponse:
     except ValueError as exc:
         return _redirect_with_error(str(exc))
 
+    resume_cleanup_job(request.app)
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(OAUTH_STATE_COOKIE)
     return response

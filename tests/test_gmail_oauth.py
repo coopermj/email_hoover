@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -7,6 +8,7 @@ from app.gmail.auth import AuthState
 from app.gmail.oauth import (
     GoogleOAuthConfig,
     load_google_oauth_config,
+    read_gmail_access_token,
     read_gmail_credentials,
     write_gmail_credentials,
 )
@@ -54,3 +56,54 @@ def test_auth_state_reports_reconnect_for_invalid_stored_credentials(tmp_path: P
 
     assert state.connected is False
     assert state.reason == "invalid_token"
+
+
+def test_read_gmail_access_token_refreshes_and_persists_updated_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gmail-token.json"
+    write_gmail_credentials(
+        path,
+        {
+            "token": "stale-access-token",
+            "refresh_token": "refresh-token",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+            "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+        },
+    )
+
+    class FakeCredentials:
+        def __init__(self) -> None:
+            self.valid = False
+            self.token = "stale-access-token"
+
+        def refresh(self, request) -> None:
+            self.valid = True
+            self.token = "fresh-access-token"
+
+        def to_json(self) -> str:
+            return json.dumps(
+                {
+                    "token": self.token,
+                    "refresh_token": "refresh-token",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "client_id": "client-id",
+                    "client_secret": "client-secret",
+                    "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+                }
+            )
+
+    fake_credentials = FakeCredentials()
+
+    monkeypatch.setattr(
+        "app.gmail.oauth.Credentials.from_authorized_user_info",
+        lambda payload, scopes=None: fake_credentials,
+    )
+
+    token = read_gmail_access_token(path)
+
+    assert token == "fresh-access-token"
+    assert read_gmail_credentials(path)["token"] == "fresh-access-token"

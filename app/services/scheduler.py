@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
@@ -8,20 +6,17 @@ from sqlmodel import Session
 from app.config import Settings
 from app.gmail.auth import AuthState
 from app.gmail.client import GmailClient
+from app.gmail.oauth import read_gmail_access_token
 from app.services.executor import RunSummary, is_auth_failure, run_cleanup_once
 
 
 AUTH_RECONNECT_MESSAGE = "Reconnect Gmail to resume scheduled cleanup."
 
 
-def _read_gmail_token(token_path: Path) -> str:
-    return token_path.read_text(encoding="utf-8").strip()
-
-
 def build_gmail_client(settings: Settings) -> GmailClient:
     return GmailClient(
         settings,
-        token_getter=lambda: _read_gmail_token(settings.gmail_token_path),
+        token_getter=lambda: read_gmail_access_token(settings.gmail_token_path),
     )
 
 
@@ -50,6 +45,17 @@ def pause_cleanup_job(app: FastAPI, *, auth_failed: bool = False) -> None:
         return
     try:
         scheduler.pause_job("cleanup")
+    except JobLookupError:
+        return
+
+
+def resume_cleanup_job(app: FastAPI) -> None:
+    app.state.cleanup_job_auth_failed = False
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler is None:
+        return
+    try:
+        scheduler.resume_job("cleanup")
     except JobLookupError:
         return
 

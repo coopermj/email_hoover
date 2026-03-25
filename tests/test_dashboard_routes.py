@@ -137,6 +137,8 @@ def test_oauth_callback_persists_credentials_and_redirects_home(
 ) -> None:
     token_path = tmp_path / "gmail-token.json"
     client.app.state.settings = replace(client.app.state.settings, gmail_token_path=token_path)
+    client.app.state.cleanup_job_auth_failed = True
+    client.app.state.scheduler.pause_job("cleanup")
 
     def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
         return f"https://accounts.google.com/o/oauth2/v2/auth?state={state_token}"
@@ -166,6 +168,8 @@ def test_oauth_callback_persists_credentials_and_redirects_home(
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     assert read_gmail_credentials(token_path)["refresh_token"] == "refresh-token"
+    assert client.app.state.cleanup_job_auth_failed is False
+    assert client.app.state.scheduler.get_job("cleanup").next_run_time is not None
 
 
 def test_approve_rule_action_redirects_back_to_dashboard(client: TestClient, session: Session) -> None:

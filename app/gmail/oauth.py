@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import secrets
 
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from app.config import Settings
 
@@ -53,6 +55,22 @@ def has_refreshable_credentials(path: Path) -> bool:
 
     required_keys = {"refresh_token", "token_uri", "client_id", "client_secret", "scopes"}
     return required_keys.issubset(payload)
+
+
+def load_google_credentials(path: Path) -> Credentials:
+    payload = read_gmail_credentials(path)
+    scopes = payload.get("scopes")
+    return Credentials.from_authorized_user_info(payload, scopes=scopes)
+
+
+def read_gmail_access_token(path: Path) -> str:
+    credentials = load_google_credentials(path)
+    if not credentials.valid:
+        credentials.refresh(GoogleAuthRequest())
+        write_gmail_credentials(path, json.loads(credentials.to_json()))
+    if not credentials.token:
+        raise ValueError("Gmail OAuth credentials did not yield an access token.")
+    return credentials.token
 
 
 def create_oauth_state_token() -> str:
