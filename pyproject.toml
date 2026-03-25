@@ -1,0 +1,18 @@
+[project]
+name = "email-hoover"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "jinja2",
+  "sqlmodel",
+  "httpx",
+  "google-auth",
+  "google-auth-oauthlib",
+  "apscheduler",
+  "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "respx", "beautifulsoup4"]
