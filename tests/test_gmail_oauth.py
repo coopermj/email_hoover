@@ -32,6 +32,18 @@ def test_google_oauth_config_loads_from_env(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
+def test_google_oauth_config_rejects_invalid_credentials_json_file(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "google-oauth-client.json"
+    credentials_path.write_text("{not-json", encoding="utf-8")
+    settings = Settings(
+        google_credentials_path=credentials_path,
+        google_redirect_uri="http://127.0.0.1:8765/auth/google/callback",
+    )
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        load_google_oauth_config(settings)
+
+
 def test_credential_store_round_trips_refreshable_token_payload(tmp_path: Path) -> None:
     path = tmp_path / "gmail-token.json"
     payload = {

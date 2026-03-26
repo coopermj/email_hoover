@@ -19,7 +19,14 @@ class GoogleOAuthConfig:
 
 def load_google_oauth_config(settings: Settings) -> GoogleOAuthConfig:
     if settings.google_credentials_path is not None:
-        payload = json.loads(settings.google_credentials_path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(settings.google_credentials_path.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            msg = f"Google OAuth credentials file not found: {settings.google_credentials_path}"
+            raise ValueError(msg) from exc
+        except json.JSONDecodeError as exc:
+            msg = "Google OAuth credentials file is invalid JSON."
+            raise ValueError(msg) from exc
         client_payload = payload.get("installed") or payload.get("web") or {}
         client_id = client_payload.get("client_id")
         client_secret = client_payload.get("client_secret")
