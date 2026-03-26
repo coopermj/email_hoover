@@ -130,6 +130,25 @@ def test_oauth_start_redirects_to_google_and_sets_state_cookie(
     assert "email_hoover_oauth_state=" in response.headers["set-cookie"]
 
 
+def test_oauth_start_missing_config_redirects_with_operator_message(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
+        raise ValueError("Google OAuth configuration is incomplete.")
+
+    monkeypatch.setattr(
+        "app.web.routes.build_google_authorization_redirect",
+        fake_build_google_authorization_redirect,
+    )
+
+    response = client.get("/auth/google/start", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/?error=")
+    assert "Google OAuth configuration is incomplete." in client.get(response.headers["location"]).text
+
+
 def test_oauth_callback_persists_credentials_and_redirects_home(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

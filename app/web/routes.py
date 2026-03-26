@@ -185,7 +185,10 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
 def start_google_oauth(request: Request) -> RedirectResponse:
     settings = getattr(request.app.state, "settings", Settings.from_env())
     state_token = create_oauth_state_token()
-    redirect_url = build_google_authorization_redirect(settings, state_token)
+    try:
+        redirect_url = build_google_authorization_redirect(settings, state_token)
+    except ValueError as exc:
+        return _redirect_with_error(str(exc))
     response = RedirectResponse(redirect_url)
     response.set_cookie(
         OAUTH_STATE_COOKIE,
