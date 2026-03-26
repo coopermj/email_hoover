@@ -1,18 +1,51 @@
 <section class="panel">
-    <h2>Active Rules</h2>
-    {% if rules %}
-    <ul class="list">
-        {% for rule in rules %}
-        <li>
-            <div class="card-title">
-                <span>{{ rule.sender_name }}</span>
-                <span class="muted">{{ rule.sender_address }}</span>
-            </div>
-            <p class="muted">{{ rule.action }} messages older than {{ rule.stale_days }} days.</p>
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p class="empty">No approved rules yet.</p>
-    {% endif %}
+    <h2>{{ rule_editor.title }}</h2>
+    <p class="muted">{{ rule_editor.subtitle }}</p>
+    <form method="post" action="{{ rule_editor.submit_url }}">
+        {% if rule_editor.candidate_id %}
+        <input type="hidden" name="candidate_id" value="{{ rule_editor.candidate_id }}">
+        {% endif %}
+        <input type="hidden" name="return_tab" value="{{ active_tab }}">
+        <label>
+            Sender Name
+            <input type="text" name="sender_name" value="{{ rule_editor.sender_name }}">
+        </label>
+        <label>
+            Sender Email
+            <input type="email" name="sender_address" value="{{ rule_editor.sender_address }}">
+        </label>
+        <div class="form-row">
+            <label>
+                Stale Days
+                <input type="number" min="0" name="stale_days" value="{{ rule_editor.stale_days }}">
+            </label>
+            <label>
+                Action
+                <select name="action">
+                    <option value="trash" {% if rule_editor.action == "trash" %}selected{% endif %}>trash</option>
+                    <option value="archive" {% if rule_editor.action == "archive" %}selected{% endif %}>archive</option>
+                </select>
+            </label>
+        </div>
+        <div class="toggle-list">
+            <label class="checkbox">
+                <input type="checkbox" name="enabled" value="on" {% if rule_editor.enabled %}checked{% endif %}>
+                <span>Rule enabled</span>
+            </label>
+            <label class="checkbox">
+                <input type="checkbox" name="schedule_enabled" value="on" {% if rule_editor.schedule_enabled %}checked{% endif %}>
+                <span>Allow scheduled cleanup</span>
+            </label>
+        </div>
+        <div class="actions">
+            <button type="submit">{{ rule_editor.submit_label }}</button>
+        </div>
+    </form>
+    <div class="actions">
+        <form method="get" action="/">
+            <input type="hidden" name="tab" value="{{ active_tab }}">
+            <input type="hidden" name="editor" value="create">
+            <button type="submit" class="secondary">Reset</button>
+        </form>
+    </div>
 </section>

@@ -1,0 +1,64 @@
+<section class="panel">
+    <div class="section-header">
+        <div>
+            <h2>Rule Workspace</h2>
+            <p class="muted">Manage candidate senders and saved rules in one place.</p>
+        </div>
+        <form method="get" action="/">
+            <input type="hidden" name="tab" value="rules">
+            <input type="hidden" name="editor" value="create">
+            <button type="submit" class="secondary">Create Rule</button>
+        </form>
+    </div>
+    {% if workspace_rows %}
+    <div class="workspace-list">
+        {% for row in workspace_rows %}
+        <article class="workspace-row {% if row.is_selected %}is-selected{% endif %}">
+            <div class="card-title">
+                <span>{{ row.sender_name }}</span>
+                <span class="muted">{{ row.sender_address }}</span>
+            </div>
+            <p class="muted">{{ row.recommendation }}</p>
+            <div class="workspace-meta">
+                <span class="badge badge-{{ row.state_tone }}">{{ row.state_label }}</span>
+                {% if row.schedule_enabled %}
+                <span class="badge">scheduled</span>
+                {% else %}
+                <span class="badge">manual only</span>
+                {% endif %}
+            </div>
+            <div class="actions">
+                <form method="get" action="/">
+                    <input type="hidden" name="tab" value="{% if row.row_type == 'candidate' %}candidates{% else %}rules{% endif %}">
+                    <input type="hidden" name="editor" value="{{ row.editor_token }}">
+                    <button type="submit" class="secondary">{% if row.row_type == "candidate" %}Review{% else %}Edit{% endif %}</button>
+                </form>
+                {% if row.row_type == "candidate" and row.candidate_id %}
+                <form method="post" action="/rules/approve">
+                    <input type="hidden" name="candidate_id" value="{{ row.candidate_id }}">
+                    <input type="hidden" name="return_tab" value="candidates">
+                    <input type="hidden" name="stale_days" value="{{ row.stale_days }}">
+                    <input type="hidden" name="action" value="{{ row.action }}">
+                    <button type="submit">Use Suggested Rule</button>
+                </form>
+                {% elif row.rule_id %}
+                    {% if row.enabled %}
+                    <form method="post" action="/rules/{{ row.rule_id }}/disable">
+                        <input type="hidden" name="return_tab" value="rules">
+                        <button type="submit" class="secondary">Disable</button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="/rules/{{ row.rule_id }}/enable">
+                        <input type="hidden" name="return_tab" value="rules">
+                        <button type="submit">Enable</button>
+                    </form>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+{% else %}
+    <p class="empty">No saved sender rules yet.</p>
+{% endif %}
+</section>

@@ -64,15 +64,40 @@
         .banner {
             margin-bottom: 1rem;
             padding: 0.9rem 1rem;
-            border: 1px solid #d7a08f;
             border-radius: 12px;
+        }
+
+        .banner-error {
+            border: 1px solid #d7a08f;
             background: #fff1ea;
             color: #7c2d12;
+        }
+
+        .banner-info {
+            border: 1px solid #b2c4d4;
+            background: #f2f7fb;
+            color: #1d4d6e;
         }
 
         .layout {
             display: grid;
             grid-template-columns: 1.15fr 1fr;
+            gap: 1rem;
+        }
+
+        .workspace-layout {
+            display: grid;
+            grid-template-columns: 0.95fr 1.35fr 0.95fr;
+            gap: 1rem;
+            align-items: start;
+        }
+
+        .workspace-layout-2col {
+            grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.9fr);
+        }
+
+        .single-panel-layout {
+            display: grid;
             gap: 1rem;
         }
 
@@ -145,6 +170,126 @@
             color: var(--ink);
         }
 
+        .button-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 0.55rem 0.75rem;
+            font: inherit;
+            text-decoration: none;
+        }
+
+        .button-link-secondary {
+            background: #fff;
+            color: var(--ink);
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: start;
+        }
+
+        .tabbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-bottom: 1rem;
+        }
+
+        .tablink {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.55rem 0.9rem;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(255, 250, 242, 0.88);
+            color: var(--muted);
+            text-decoration: none;
+            box-shadow: 0 8px 18px rgba(31, 41, 51, 0.05);
+        }
+
+        .tablink.is-active {
+            color: #fff9f4;
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .workspace-list {
+            display: grid;
+            gap: 0.85rem;
+            margin-top: 1rem;
+        }
+
+        .workspace-row {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 0.9rem;
+            background: rgba(255, 255, 255, 0.65);
+        }
+
+        .workspace-row.is-selected {
+            border-color: var(--accent);
+            box-shadow: inset 0 0 0 1px rgba(162, 62, 42, 0.18);
+        }
+
+        .workspace-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-top: 0.75rem;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.2rem 0.55rem;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            color: var(--muted);
+            background: #fff;
+            font-size: 0.85rem;
+        }
+
+        .badge-enabled {
+            color: #0f5132;
+            border-color: #9cc5af;
+            background: #edf9f1;
+        }
+
+        .badge-disabled {
+            color: #7c2d12;
+            border-color: #d7a08f;
+            background: #fff1ea;
+        }
+
+        .badge-candidate {
+            color: #7a4b00;
+            border-color: #d9c07b;
+            background: #fff8e6;
+        }
+
+        .toggle-list {
+            display: grid;
+            gap: 0.5rem;
+            margin-top: 0.9rem;
+        }
+
+        .checkbox {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+
+        .checkbox input {
+            width: auto;
+            margin: 0;
+        }
+
         .empty {
             margin-top: 1rem;
             color: var(--muted);
@@ -154,13 +299,16 @@
             .layout {
                 grid-template-columns: 1fr;
             }
+            .workspace-layout {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
 <body>
     <div class="shell">
-        {% if error_message %}
-        <div class="banner" role="alert">{{ error_message }}</div>
+        {% if banner_message %}
+        <div class="banner banner-{{ banner_tone }}" role="alert">{{ banner_message }}</div>
         {% endif %}
         {% block content %}{% endblock %}
     </div>

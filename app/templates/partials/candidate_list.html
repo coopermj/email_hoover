@@ -1,5 +1,10 @@
 <section class="panel">
-    <h2>Review Candidates</h2>
+    <div class="section-header">
+        <div>
+            <h2>Potential Newsletters</h2>
+            <p class="muted">Review likely newsletter senders before turning them into autonomous cleanup rules.</p>
+        </div>
+    </div>
     {% if candidates %}
     <ul class="list">
         {% for candidate in candidates %}
@@ -13,10 +18,11 @@
             </p>
             <form method="post" action="/rules/approve">
                 <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
+                <input type="hidden" name="return_tab" value="candidates">
                 <div class="form-row">
                     <label>
                         Stale Days
-                        <input type="number" min="1" name="stale_days" value="{{ candidate.recommended_stale_days }}">
+                        <input type="number" min="0" name="stale_days" value="{{ candidate.recommended_stale_days }}">
                     </label>
                     <label>
                         Action
@@ -31,10 +37,13 @@
                 </div>
             </form>
             <div class="actions">
+                <a class="button-link button-link-secondary" href="/?tab=candidates&editor=candidate:{{ candidate.id }}">Review In Editor</a>
                 <form method="post" action="/candidates/{{ candidate.id }}/reject">
+                    <input type="hidden" name="return_tab" value="candidates">
                     <button type="submit" class="secondary">Reject</button>
                 </form>
                 <form method="post" action="/candidates/{{ candidate.id }}/postpone">
+                    <input type="hidden" name="return_tab" value="candidates">
                     <button type="submit" class="secondary">Postpone</button>
                 </form>
             </div>
@@ -42,6 +51,6 @@
         {% endfor %}
     </ul>
     {% else %}
-    <p class="empty">No pending candidates.</p>
+    <p class="empty">No pending newsletter candidates yet. Run a scan to find likely newsletters first.</p>
     {% endif %}
 </section>

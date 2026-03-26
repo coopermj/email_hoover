@@ -63,6 +63,7 @@ async def run_cleanup_once(
                             triggered_by=triggered_by,
                             status="planned",
                             matched_count=1,
+                            error_message=_message_snapshot(rule, match.subject),
                         )
                     )
                     summary.planned_actions += 1
@@ -79,6 +80,7 @@ async def run_cleanup_once(
                         status="completed",
                         matched_count=1,
                         actioned_count=1,
+                        error_message=_message_snapshot(rule, match.subject),
                     )
                 )
                 session.commit()
@@ -105,6 +107,16 @@ async def run_cleanup_once(
             summary.failed_rules += 1
             summary.paused_rules += 1
             summary.errors.append(f"retry_exhausted:{exc}")
+
+    if summary.rules_ran == 0:
+        _record_noop(session, triggered_by, "No active cleanup rules to run.")
+    elif (
+        summary.messages_acted_on == 0
+        and summary.planned_actions == 0
+        and summary.failed_rules == 0
+        and summary.paused_rules == 0
+    ):
+        _record_noop(session, triggered_by, "No stale messages matched the active rules.")
 
     session.commit()
     return summary
@@ -192,3 +204,23 @@ def _pause_rule(
             error_message=reason,
         )
     )
+
+
+def _record_noop(session: Session, triggered_by: str, detail: str) -> None:
+    session.add(
+        RunLog(
+            trigger=triggered_by,
+            triggered_by=triggered_by,
+            status="noop",
+            action="noop",
+            error_message=detail,
+        )
+    )
+
+
+def _message_snapshot(rule: CleanupRule, subject: str) -> str:
+    sender = rule.sender_name or rule.sender_address
+    cleaned_subject = subject.strip()
+    if not cleaned_subject:
+        return sender
+    return f"{sender} | {cleaned_subject}"

@@ -6,12 +6,17 @@
 <section class="hero">
     <div>
         <p class="muted">Operator Console</p>
-        <h1>Review Candidates / Active Rules / Recent Runs / Exceptions</h1>
-        <p>Review newly discovered senders, approve cleanup rules, and inspect recent cleanup activity.</p>
+        <h1>Newsletter Cleanup Console</h1>
+        <p>Scan Gmail for likely newsletters, choose which ones become cleanup rules, and review what the agent changed.</p>
     </div>
     <div class="actions">
         {% if auth_connected %}
+        <form method="post" action="/candidates/discover">
+            <input type="hidden" name="return_tab" value="{{ active_tab }}">
+            <button type="submit" class="secondary">Scan Gmail For Newsletters</button>
+        </form>
         <form method="post" action="/runs/execute">
+            <input type="hidden" name="return_tab" value="{{ active_tab }}">
             <button type="submit">Run Cleanup Now</button>
         </form>
         {% else %}
@@ -22,14 +27,33 @@
     </div>
 </section>
 
-<div class="layout">
-    <section class="stack">
+<nav class="tabbar" aria-label="Console sections">
+    <a href="/?tab=candidates" class="tablink {% if active_tab == 'candidates' %}is-active{% endif %}" {% if active_tab == 'candidates' %}aria-current="page"{% endif %}>Candidates</a>
+    <a href="/?tab=rules" class="tablink {% if active_tab == 'rules' %}is-active{% endif %}" {% if active_tab == 'rules' %}aria-current="page"{% endif %}>Rules</a>
+    <a href="/?tab=activity" class="tablink {% if active_tab == 'activity' %}is-active{% endif %}" {% if active_tab == 'activity' %}aria-current="page"{% endif %}>Activity</a>
+    <a href="/?tab=exceptions" class="tablink {% if active_tab == 'exceptions' %}is-active{% endif %}" {% if active_tab == 'exceptions' %}aria-current="page"{% endif %}>Exceptions</a>
+</nav>
+
+{% if active_tab in ['candidates', 'rules'] %}
+<div class="workspace-layout workspace-layout-2col">
+    <section class="stack main-column">
+        {% if active_tab == 'candidates' %}
         {% include "partials/candidate_list.html" %}
-        {% include "partials/exceptions.html" %}
+        {% else %}
+        {% include "partials/rule_workspace.html" %}
+        {% endif %}
     </section>
-    <main class="stack">
+    <section class="stack sidebar-column">
         {% include "partials/rule_editor.html" %}
-        {% include "partials/run_log.html" %}
-    </main>
+    </section>
 </div>
+{% elif active_tab == 'activity' %}
+<div class="single-panel-layout">
+    {% include "partials/run_log.html" %}
+</div>
+{% else %}
+<div class="single-panel-layout">
+    {% include "partials/exceptions.html" %}
+</div>
+{% endif %}
 {% endblock %}

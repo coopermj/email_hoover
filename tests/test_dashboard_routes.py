@@ -35,7 +35,7 @@ def session() -> Session:
 
 
 @pytest.fixture
-def client(session: Session) -> TestClient:
+def client(session: Session, tmp_path: Path) -> TestClient:
     from app.db import get_session
 
     try:
@@ -44,6 +44,7 @@ def client(session: Session) -> TestClient:
         get_gmail_client = None
 
     app = create_app()
+    app.state.settings = replace(app.state.settings, gmail_token_path=tmp_path / "missing-token.json")
     app.dependency_overrides[get_session] = lambda: session
     if get_gmail_client is not None:
         app.dependency_overrides[get_gmail_client] = lambda: GmailClientStub()
@@ -53,6 +54,8 @@ def client(session: Session) -> TestClient:
 
 
 def test_dashboard_renders_candidates_rules_and_run_log(client: TestClient, session: Session) -> None:
+    from app.gmail.auth import AuthState
+
     session.add(
         Candidate(
             sender_address="pending@example.com",
@@ -86,6 +89,47 @@ def test_dashboard_renders_candidates_rules_and_run_log(client: TestClient, sess
             matched_count=3,
             actioned_count=2,
             action="trash",
+            error_message="Daily Example | Top stories today",
+        )
+    )
+    session.commit()
+    client.app.state.cleanup_job_auth_failed = False
+    client.app.state.scheduler.resume_job("cleanup")
+    original_from_disk = AuthState.from_disk
+    AuthState.from_disk = classmethod(lambda cls, settings: AuthState(True))  # type: ignore[method-assign]
+
+    try:
+        response = client.get("/")
+    finally:
+        AuthState.from_disk = original_from_disk  # type: ignore[method-assign]
+
+    assert response.status_code == 200
+    assert "Scan Gmail For Newsletters" in response.text
+    assert "Potential Newsletters" in response.text
+    assert "Create Rule" in response.text
+    assert "Run Cleanup Now" in response.text
+    assert "Pending Sender" in response.text
+    assert 'aria-current="page">Candidates<' in response.text
+
+
+def test_dashboard_defaults_to_candidates_tab_and_hides_other_sections(
+    client: TestClient,
+    session: Session,
+) -> None:
+    session.add(
+        Candidate(
+            sender_address="pending@example.com",
+            sender_name="Pending Sender",
+            recommended_stale_days=2,
+            recommended_action="trash",
+        )
+    )
+    session.add(
+        CleanupRule(
+            sender_address="rule@example.com",
+            sender_name="Rule Sender",
+            stale_days=5,
+            action="archive",
         )
     )
     session.commit()
@@ -93,15 +137,118 @@ def test_dashboard_renders_candidates_rules_and_run_log(client: TestClient, sess
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Review Candidates" in response.text
-    assert "Connect Gmail" in response.text
-    assert "Exceptions" in response.text
+    assert "Potential Newsletters" in response.text
     assert "Pending Sender" in response.text
-    assert "Rule Sender" in response.text
-    assert "Paused Sender" in response.text
+    assert "Recent Cleanup Activity" not in response.text
+    assert "Rule Sender" not in response.text
+    assert "Paused Sender" not in response.text
+
+
+def test_dashboard_candidates_tab_hides_pending_sender_when_rule_already_exists(
+    client: TestClient,
+    session: Session,
+) -> None:
+    session.add(
+        Candidate(
+            sender_address="duplicate@example.com",
+            sender_name="Duplicate Sender",
+            recommended_stale_days=2,
+            recommended_action="trash",
+        )
+    )
+    session.add(
+        CleanupRule(
+            sender_address="duplicate@example.com",
+            sender_name="Duplicate Sender",
+            stale_days=2,
+            action="trash",
+        )
+    )
+    session.commit()
+
+    response = client.get("/?tab=candidates")
+
+    assert response.status_code == 200
+    assert "Duplicate Sender" not in response.text
+
+
+def test_dashboard_activity_tab_hides_editor_and_other_workspaces(
+    client: TestClient,
+    session: Session,
+) -> None:
+    session.add(
+        RunLog(
+            trigger="manual",
+            triggered_by="manual",
+            status="completed",
+            matched_count=1,
+            actioned_count=1,
+            action="trash",
+            error_message="Daily Example | Top stories today",
+        )
+    )
+    session.commit()
+
+    response = client.get("/?tab=activity")
+
+    assert response.status_code == 200
     assert "Recent Cleanup Activity" in response.text
-    assert "manual cleanup event" in response.text
-    assert "2 actions applied" in response.text
+    assert "Top stories today" in response.text
+    assert "Potential Newsletters" not in response.text
+    assert "Rule Workspace" not in response.text
+    assert "Create Rule" not in response.text
+    assert 'aria-current="page">Activity<' in response.text
+
+
+def test_dashboard_rules_tab_shows_rule_workspace_and_editor(
+    client: TestClient,
+    session: Session,
+) -> None:
+    session.add(
+        CleanupRule(
+            sender_address="rule@example.com",
+            sender_name="Rule Sender",
+            stale_days=5,
+            action="archive",
+        )
+    )
+    session.commit()
+
+    response = client.get("/?tab=rules")
+
+    assert response.status_code == 200
+    assert "Rule Workspace" in response.text
+    assert "Rule Sender" in response.text
+    assert "Create Rule" in response.text
+    assert "Potential Newsletters" not in response.text
+    assert "Recent Cleanup Activity" not in response.text
+    assert 'aria-current="page">Rules<' in response.text
+
+
+def test_dashboard_exceptions_tab_shows_paused_rules_without_editor(
+    client: TestClient,
+    session: Session,
+) -> None:
+    session.add(
+        CleanupRule(
+            sender_address="paused@example.com",
+            sender_name="Paused Sender",
+            stale_days=7,
+            action="trash",
+            pause_reason="volume_spike",
+        )
+    )
+    session.commit()
+
+    response = client.get("/?tab=exceptions")
+
+    assert response.status_code == 200
+    assert "Exceptions" in response.text
+    assert "Paused Sender" in response.text
+    assert "Create Rule" not in response.text
+    assert "Potential Newsletters" not in response.text
+    assert "Rule Workspace" not in response.text
+    assert 'aria-current="page">Exceptions<' in response.text
 
 
 def test_dashboard_shows_connect_button_when_gmail_disconnected(client: TestClient) -> None:
@@ -359,11 +506,168 @@ def test_approve_rule_action_redirects_back_to_dashboard(client: TestClient, ses
     assert response.headers["location"] == "/"
 
 
+def test_discover_candidates_triggers_newsletter_scan_and_redirects_with_message(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def fake_discover_newsletter_candidates(session, gmail_client) -> int:
+        calls.append("scan")
+        return 3
+
+    monkeypatch.setattr(
+        "app.web.routes.discover_newsletter_candidates",
+        fake_discover_newsletter_candidates,
+        raising=False,
+    )
+
+    response = client.post("/candidates/discover", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/?message=")
+    follow_up = client.get(response.headers["location"])
+    assert "Found 3 newsletter candidates to review." in follow_up.text
+    assert calls == ["scan"]
+
+
+def test_discover_candidates_handles_empty_scan_results_with_operator_message(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_discover_newsletter_candidates(session, gmail_client) -> int:
+        return 0
+
+    monkeypatch.setattr(
+        "app.web.routes.discover_newsletter_candidates",
+        fake_discover_newsletter_candidates,
+        raising=False,
+    )
+
+    response = client.post("/candidates/discover", follow_redirects=False)
+
+    assert response.status_code == 303
+    follow_up = client.get(response.headers["location"])
+    assert "No likely newsletters were found in the current scan window." in follow_up.text
+
+
+def test_create_rule_action_redirects_back_to_dashboard(client: TestClient, session: Session) -> None:
+    response = client.post(
+        "/rules/create",
+        data={
+            "sender_address": "manual@example.com",
+            "sender_name": "Manual Sender",
+            "stale_days": 2,
+            "action": "trash",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    created = session.exec(select(CleanupRule).where(CleanupRule.sender_address == "manual@example.com")).one()
+    assert created.sender_name == "Manual Sender"
+    assert created.action == "trash"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_message"),
+    [
+        (
+            {"sender_address": "", "sender_name": "Manual Sender", "stale_days": 2, "action": "trash"},
+            "Sender email is required.",
+        ),
+        (
+            {"sender_address": "manual@example.com", "sender_name": "Manual Sender", "stale_days": -1, "action": "trash"},
+            "Stale days must be at least 0.",
+        ),
+        (
+            {"sender_address": "manual@example.com", "sender_name": "Manual Sender", "stale_days": 2, "action": "delete"},
+            "Action must be archive or trash.",
+        ),
+    ],
+)
+def test_create_rule_validation_errors_redirect_with_operator_message(
+    client: TestClient,
+    session: Session,
+    payload: dict[str, object],
+    expected_message: str,
+) -> None:
+    response = client.post("/rules/create", data=payload, follow_redirects=False)
+
+    assert response.status_code == 303
+    follow_up = client.get(response.headers["location"])
+    assert expected_message in follow_up.text
+    assert session.exec(select(CleanupRule)).all() == []
+
+
+def test_update_rule_action_persists_changes(client: TestClient, session: Session) -> None:
+    rule = CleanupRule(
+        sender_address="before@example.com",
+        sender_name="Before Sender",
+        stale_days=2,
+        action="trash",
+    )
+    session.add(rule)
+    session.commit()
+    session.refresh(rule)
+
+    response = client.post(
+        f"/rules/{rule.id}/update",
+        data={
+            "sender_address": "after@example.com",
+            "sender_name": "After Sender",
+            "stale_days": 7,
+            "action": "archive",
+            "enabled": "on",
+            "schedule_enabled": "",
+        },
+        follow_redirects=False,
+    )
+
+    session.refresh(rule)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert rule.sender_address == "after@example.com"
+    assert rule.sender_name == "After Sender"
+    assert rule.stale_days == 7
+    assert rule.action == "archive"
+    assert rule.enabled is True
+    assert rule.schedule_enabled is False
+
+
+def test_disable_and_enable_rule_actions_redirect_back_to_dashboard(
+    client: TestClient,
+    session: Session,
+) -> None:
+    rule = CleanupRule(
+        sender_address="toggle@example.com",
+        sender_name="Toggle Sender",
+        stale_days=2,
+        action="trash",
+    )
+    session.add(rule)
+    session.commit()
+    session.refresh(rule)
+
+    disable_response = client.post(f"/rules/{rule.id}/disable", follow_redirects=False)
+    session.refresh(rule)
+    assert rule.enabled is False
+
+    enable_response = client.post(f"/rules/{rule.id}/enable", follow_redirects=False)
+    session.refresh(rule)
+
+    assert disable_response.status_code == 303
+    assert enable_response.status_code == 303
+    assert rule.enabled is True
+
+
 @pytest.mark.parametrize(
     ("stale_days", "action", "expected_message"),
     [
-        (0, "trash", "Stale days must be at least 1."),
-        (-3, "archive", "Stale days must be at least 1."),
+        (0, "trash", None),
+        (-3, "archive", "Stale days must be at least 0."),
         (2, "delete", "Action must be archive or trash."),
     ],
 )
@@ -393,11 +697,18 @@ def test_approve_rule_validation_errors_redirect_with_operator_message(
     session.refresh(candidate)
 
     assert response.status_code == 303
-    assert response.headers["location"].startswith("/?error=")
-    follow_up = client.get(response.headers["location"])
-    assert expected_message in follow_up.text
-    assert candidate.status == "pending"
-    assert session.exec(select(CleanupRule)).all() == []
+    if expected_message is None:
+        assert response.headers["location"] == "/"
+        assert candidate.status == "approved"
+        created_rules = session.exec(select(CleanupRule)).all()
+        assert len(created_rules) == 1
+        assert created_rules[0].stale_days == 0
+    else:
+        assert response.headers["location"].startswith("/?error=")
+        follow_up = client.get(response.headers["location"])
+        assert expected_message in follow_up.text
+        assert candidate.status == "pending"
+        assert session.exec(select(CleanupRule)).all() == []
 
 
 def test_approve_rule_duplicate_sender_redirects_with_operator_message(
@@ -439,7 +750,7 @@ def test_approve_rule_duplicate_sender_redirects_with_operator_message(
     assert duplicate_response.status_code == 303
     follow_up = client.get(duplicate_response.headers["location"])
     assert "already has a cleanup rule" in follow_up.text
-    assert second.status == "pending"
+    assert second.status == "approved"
 
 
 def test_reject_and_postpone_actions_redirect_back_to_dashboard(
@@ -497,6 +808,40 @@ def test_run_cleanup_now_triggers_manual_execution(
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     assert calls == [("manual", False)]
+
+
+def test_run_cleanup_without_rules_redirects_with_operator_message_and_logs_noop(
+    client: TestClient,
+    session: Session,
+) -> None:
+    response = client.post("/runs/execute", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/?message=")
+    follow_up = client.get(response.headers["location"])
+    assert "No active cleanup rules to run." in follow_up.text
+    logs = session.exec(select(RunLog)).all()
+    assert len(logs) == 1
+    assert logs[0].status == "noop"
+
+
+def test_run_cleanup_no_matches_redirects_with_operator_message(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.executor import RunSummary
+
+    async def fake_run_cleanup_once(session, gmail_client, *, triggered_by: str, dry_run: bool = False):
+        return RunSummary(rules_ran=1, messages_acted_on=0)
+
+    monkeypatch.setattr("app.web.routes.run_cleanup_once", fake_run_cleanup_once, raising=False)
+
+    response = client.post("/runs/execute", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/?message=")
+    follow_up = client.get(response.headers["location"])
+    assert "No stale messages matched the active rules." in follow_up.text
 
 
 def test_run_cleanup_value_error_redirects_with_operator_message(

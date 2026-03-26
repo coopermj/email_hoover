@@ -13,7 +13,9 @@ from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
 from app.services.rules import (
     approve_candidate,
+    create_rule,
     disable_rule,
+    enable_rule,
     mark_candidate_postponed,
     mark_candidate_rejected,
     preview_rule_matches,
@@ -129,6 +131,25 @@ async def test_preview_rule_matches_returns_stale_messages(
 
 
 @pytest.mark.asyncio
+async def test_preview_rule_matches_supports_zero_day_threshold(
+    session: Session,
+    gmail_client_stub,
+) -> None:
+    rule = create_rule(
+        session,
+        sender_address="today@example.com",
+        sender_name="Today Sender",
+        stale_days=0,
+        action="trash",
+    )
+
+    matches = await preview_rule_matches(session, gmail_client_stub, rule.id)
+
+    assert gmail_client_stub.calls == [("from:today@example.com", "trash")]
+    assert matches[0].message_id == "m-older"
+
+
+@pytest.mark.asyncio
 async def test_gmail_client_preview_matches_returns_message_metadata(tmp_path: Path) -> None:
     requests: list[httpx.Request] = []
 
@@ -229,6 +250,93 @@ def test_rule_can_be_updated_and_disabled(session: Session) -> None:
     assert edited.stale_days == 5
     assert edited.action == "archive"
     assert disabled.enabled is False
+
+
+def test_manual_rule_can_be_created(session: Session) -> None:
+    rule = create_rule(
+        session,
+        sender_address="manual@example.com",
+        sender_name="Manual Sender",
+        stale_days=4,
+        action="trash",
+    )
+
+    assert rule.sender_address == "manual@example.com"
+    assert rule.sender_name == "Manual Sender"
+    assert rule.stale_days == 4
+    assert rule.action == "trash"
+    assert rule.enabled is True
+    assert rule.schedule_enabled is True
+
+
+def test_manual_rule_duplicate_sender_raises_controlled_error(session: Session) -> None:
+    create_rule(
+        session,
+        sender_address="duplicate@example.com",
+        sender_name="Original Sender",
+        stale_days=2,
+        action="trash",
+    )
+
+    with pytest.raises(ValueError, match="already has a cleanup rule"):
+        create_rule(
+            session,
+            sender_address="duplicate@example.com",
+            sender_name="Second Sender",
+            stale_days=7,
+            action="archive",
+        )
+
+
+def test_manual_rule_creation_marks_matching_pending_candidate_approved(session: Session) -> None:
+    candidate = seed_candidate(
+        session,
+        sender_address="manual@example.com",
+        sender_name="Manual Sender",
+    )
+
+    create_rule(
+        session,
+        sender_address="manual@example.com",
+        sender_name="Manual Sender",
+        stale_days=2,
+        action="trash",
+    )
+
+    session.refresh(candidate)
+    assert candidate.status == "approved"
+
+
+def test_rule_can_be_reenabled_and_sender_fields_updated(session: Session) -> None:
+    rule = create_rule(
+        session,
+        sender_address="before@example.com",
+        sender_name="Before Sender",
+        stale_days=2,
+        action="trash",
+    )
+    disable_rule(session, rule.id)
+
+    updated = update_rule(
+        session,
+        rule.id,
+        sender_address="after@example.com",
+        sender_name="After Sender",
+        stale_days=5,
+        action="archive",
+        enabled=False,
+        schedule_enabled=False,
+    )
+
+    assert updated.sender_address == "after@example.com"
+    assert updated.sender_name == "After Sender"
+    assert updated.stale_days == 5
+    assert updated.action == "archive"
+    assert updated.enabled is False
+    assert updated.schedule_enabled is False
+
+    enabled = enable_rule(session, rule.id)
+    assert enabled.enabled is True
 
 
 def test_run_log_round_trips_through_persistence(session: Session) -> None:

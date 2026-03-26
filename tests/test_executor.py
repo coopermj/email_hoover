@@ -99,6 +99,12 @@ class MidRunAuthFailureGmailClientStub(GmailClientStub):
         await super().archive_message(message_id)
 
 
+class NoMatchGmailClientStub(GmailClientStub):
+    async def preview_matches(self, query: str, *, action: str):
+        self.preview_calls.append((query, action))
+        return []
+
+
 @pytest.fixture
 def gmail_client_stub() -> GmailClientStub:
     return GmailClientStub()
@@ -127,6 +133,11 @@ def gmail_auth_http_failure_stub() -> GmailAuthHTTPFailureStub:
 @pytest.fixture
 def mid_run_auth_failure_gmail_client_stub() -> MidRunAuthFailureGmailClientStub:
     return MidRunAuthFailureGmailClientStub()
+
+
+@pytest.fixture
+def no_match_gmail_client_stub() -> NoMatchGmailClientStub:
+    return NoMatchGmailClientStub()
 
 
 def seed_rule(
@@ -177,6 +188,8 @@ async def test_run_cleanup_once_records_audit_and_skips_already_processed_messag
     logs = session.exec(select(RunLog).where(RunLog.action == "archive")).all()
     assert [log.message_id for log in logs] == ["m-1", "m-2"]
     assert all(log.triggered_by == "manual" for log in logs)
+    assert logs[0].error_message == 'Example Newsletter | Newsletter 1'
+    assert logs[1].error_message == 'Example Newsletter | Newsletter 2'
 
     second = await run_cleanup_once(session, gmail_client_stub, triggered_by="manual")
     assert second.messages_acted_on == 0
@@ -397,3 +410,42 @@ async def test_executor_preserves_audit_logs_when_auth_fails_mid_run(
     assert all(log.status == "completed" for log in logs)
     assert mid_run_auth_failure_gmail_client_stub.archived == ["m-1"]
     assert mid_run_auth_failure_gmail_client_stub.archive_attempts == ["m-1", "m-2"]
+
+
+@pytest.mark.asyncio
+async def test_executor_records_noop_run_when_no_rules_exist(
+    session: Session,
+    gmail_client_stub: GmailClientStub,
+) -> None:
+    from app.services.executor import run_cleanup_once
+
+    result = await run_cleanup_once(session, gmail_client_stub, triggered_by="manual")
+
+    assert result.rules_ran == 0
+    logs = session.exec(select(RunLog)).all()
+    assert len(logs) == 1
+    assert logs[0].status == "noop"
+    assert logs[0].error_message == "No active cleanup rules to run."
+
+
+@pytest.mark.asyncio
+async def test_executor_records_noop_run_when_rules_match_nothing(
+    session: Session,
+    no_match_gmail_client_stub: NoMatchGmailClientStub,
+) -> None:
+    from app.services.executor import run_cleanup_once
+
+    seed_rule(
+        session,
+        sender_address="empty@example.com",
+        sender_name="Empty Sender",
+        action="archive",
+    )
+
+    result = await run_cleanup_once(session, no_match_gmail_client_stub, triggered_by="manual")
+
+    assert result.rules_ran == 1
+    assert result.messages_acted_on == 0
+    logs = session.exec(select(RunLog).where(RunLog.status == "noop")).all()
+    assert len(logs) == 1
+    assert logs[0].error_message == "No stale messages matched the active rules."
