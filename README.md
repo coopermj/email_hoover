@@ -77,7 +77,7 @@ export SESSION_SECRET="change-me-for-non-dev-use"
 If you use the default redirect URI, run the app on port `8765`:
 
 ```bash
-python3 -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8765
+python3 -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8765 --env-file .env
 ```
 
 Then open:

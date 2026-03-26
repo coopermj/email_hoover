@@ -187,7 +187,7 @@ def start_google_oauth(request: Request) -> RedirectResponse:
     state_token = create_oauth_state_token()
     try:
         redirect_url = build_google_authorization_redirect(settings, state_token)
-    except ValueError as exc:
+    except (ValueError, FileNotFoundError) as exc:
         return _redirect_with_error(str(exc))
     response = RedirectResponse(redirect_url)
     response.set_cookie(
