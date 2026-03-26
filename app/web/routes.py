@@ -13,7 +13,7 @@ from app.db import get_session
 from app.gmail.auth import AuthState
 from app.gmail.client import GmailClient
 from app.gmail.oauth import (
-    build_google_authorization_redirect,
+    build_google_oauth_start,
     create_oauth_state_token,
     exchange_google_code,
     write_gmail_credentials,
@@ -36,6 +36,7 @@ router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 ALLOWED_ACTIONS = {"archive", "trash"}
 OAUTH_STATE_COOKIE = "email_hoover_oauth_state"
+OAUTH_CODE_VERIFIER_COOKIE = "email_hoover_oauth_code_verifier"
 
 
 @dataclass(slots=True)
@@ -195,13 +196,19 @@ def start_google_oauth(request: Request) -> RedirectResponse:
     settings = getattr(request.app.state, "settings", Settings.from_env())
     state_token = create_oauth_state_token()
     try:
-        redirect_url = build_google_authorization_redirect(settings, state_token)
+        oauth_start = build_google_oauth_start(settings, state_token)
     except (ValueError, FileNotFoundError) as exc:
         return _redirect_with_error(str(exc))
-    response = RedirectResponse(redirect_url)
+    response = RedirectResponse(oauth_start.authorization_url)
     response.set_cookie(
         OAUTH_STATE_COOKIE,
         state_token,
+        httponly=True,
+        samesite="lax",
+    )
+    response.set_cookie(
+        OAUTH_CODE_VERIFIER_COOKIE,
+        oauth_start.code_verifier,
         httponly=True,
         samesite="lax",
     )
@@ -223,9 +230,13 @@ def complete_google_oauth(request: Request) -> RedirectResponse:
     if not code:
         return _redirect_with_error("Google OAuth callback did not include an authorization code.")
 
+    code_verifier = request.cookies.get(OAUTH_CODE_VERIFIER_COOKIE)
+    if not code_verifier:
+        return _redirect_with_error("Google OAuth PKCE verifier is missing.")
+
     settings = getattr(request.app.state, "settings", Settings.from_env())
     try:
-        credential_payload = exchange_google_code(settings, code)
+        credential_payload = exchange_google_code(settings, code, code_verifier)
         write_gmail_credentials(settings.gmail_token_path, credential_payload)
     except (ValueError, OSError) as exc:
         return _redirect_with_error(str(exc))
@@ -233,6 +244,7 @@ def complete_google_oauth(request: Request) -> RedirectResponse:
     resume_cleanup_job(request.app)
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(OAUTH_STATE_COOKIE)
+    response.delete_cookie(OAUTH_CODE_VERIFIER_COOKIE)
     return response
 
 

@@ -6,7 +6,10 @@ import pytest
 from app.config import Settings
 from app.gmail.auth import AuthState
 from app.gmail.oauth import (
+    GoogleOAuthStart,
     GoogleOAuthConfig,
+    build_google_oauth_start,
+    exchange_google_code,
     load_google_oauth_config,
     read_gmail_access_token,
     read_gmail_credentials,
@@ -42,6 +45,65 @@ def test_google_oauth_config_rejects_invalid_credentials_json_file(tmp_path: Pat
 
     with pytest.raises(ValueError, match="invalid JSON"):
         load_google_oauth_config(settings)
+
+
+def test_build_google_oauth_start_returns_code_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(
+        google_client_id="client-id",
+        google_client_secret="client-secret",
+        google_redirect_uri="http://localhost:8765/auth/google/callback",
+    )
+
+    class FakeFlow:
+        def __init__(self) -> None:
+            self.code_verifier = "verifier-123"
+
+        def authorization_url(self, **kwargs):
+            return ("https://accounts.google.com/o/oauth2/auth?state=test-state", "test-state")
+
+    monkeypatch.setattr("app.gmail.oauth.Flow.from_client_config", lambda *args, **kwargs: FakeFlow())
+
+    start = build_google_oauth_start(settings, "test-state")
+
+    assert start == GoogleOAuthStart(
+        authorization_url="https://accounts.google.com/o/oauth2/auth?state=test-state",
+        code_verifier="verifier-123",
+    )
+
+
+def test_exchange_google_code_uses_code_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(
+        google_client_id="client-id",
+        google_client_secret="client-secret",
+        google_redirect_uri="http://localhost:8765/auth/google/callback",
+    )
+    calls: list[str] = []
+
+    class FakeCredentials:
+        def to_json(self) -> str:
+            return json.dumps(
+                {
+                    "token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "client_id": "client-id",
+                    "client_secret": "client-secret",
+                    "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+                }
+            )
+
+    class FakeFlow:
+        credentials = FakeCredentials()
+
+        def fetch_token(self, *, code: str, code_verifier: str) -> None:
+            calls.append(code_verifier)
+
+    monkeypatch.setattr("app.gmail.oauth.Flow.from_client_config", lambda *args, **kwargs: FakeFlow())
+
+    payload = exchange_google_code(settings, "auth-code", "verifier-123")
+
+    assert calls == ["verifier-123"]
+    assert payload["refresh_token"] == "refresh-token"
 
 
 def test_credential_store_round_trips_refreshable_token_payload(tmp_path: Path) -> None:

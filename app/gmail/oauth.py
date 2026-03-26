@@ -17,6 +17,12 @@ class GoogleOAuthConfig:
     scopes: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class GoogleOAuthStart:
+    authorization_url: str
+    code_verifier: str
+
+
 def load_google_oauth_config(settings: Settings) -> GoogleOAuthConfig:
     if settings.google_credentials_path is not None:
         try:
@@ -84,7 +90,7 @@ def create_oauth_state_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-def build_google_authorization_redirect(settings: Settings, state_token: str) -> str:
+def build_google_oauth_start(settings: Settings, state_token: str) -> GoogleOAuthStart:
     config = load_google_oauth_config(settings)
     flow = Flow.from_client_config(
         {
@@ -104,10 +110,16 @@ def build_google_authorization_redirect(settings: Settings, state_token: str) ->
         prompt="consent",
         state=state_token,
     )
-    return authorization_url
+    code_verifier = getattr(flow, "code_verifier", None)
+    if not code_verifier:
+        raise ValueError("Google OAuth flow did not produce a PKCE code verifier.")
+    return GoogleOAuthStart(
+        authorization_url=authorization_url,
+        code_verifier=code_verifier,
+    )
 
 
-def exchange_google_code(settings: Settings, code: str) -> dict[str, object]:
+def exchange_google_code(settings: Settings, code: str, code_verifier: str) -> dict[str, object]:
     config = load_google_oauth_config(settings)
     flow = Flow.from_client_config(
         {
@@ -121,5 +133,5 @@ def exchange_google_code(settings: Settings, code: str) -> dict[str, object]:
         scopes=config.scopes,
         redirect_uri=config.redirect_uri,
     )
-    flow.fetch_token(code=code)
+    flow.fetch_token(code=code, code_verifier=code_verifier)
     return json.loads(flow.credentials.to_json())

@@ -129,13 +129,18 @@ def test_oauth_start_redirects_to_google_and_sets_state_cookie(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
+    def fake_build_google_oauth_start(settings, state_token: str):
         assert state_token
-        return "https://accounts.google.com/o/oauth2/v2/auth?state=fake-state"
+        from app.gmail.oauth import GoogleOAuthStart
+
+        return GoogleOAuthStart(
+            authorization_url="https://accounts.google.com/o/oauth2/v2/auth?state=fake-state",
+            code_verifier="verifier-123",
+        )
 
     monkeypatch.setattr(
-        "app.web.routes.build_google_authorization_redirect",
-        fake_build_google_authorization_redirect,
+        "app.web.routes.build_google_oauth_start",
+        fake_build_google_oauth_start,
     )
 
     response = client.get("/auth/google/start", follow_redirects=False)
@@ -143,18 +148,19 @@ def test_oauth_start_redirects_to_google_and_sets_state_cookie(
     assert response.status_code == 307
     assert response.headers["location"].startswith("https://accounts.google.com/")
     assert "email_hoover_oauth_state=" in response.headers["set-cookie"]
+    assert "email_hoover_oauth_code_verifier=verifier-123" in response.headers["set-cookie"]
 
 
 def test_oauth_start_missing_config_redirects_with_operator_message(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
+    def fake_build_google_oauth_start(settings, state_token: str):
         raise ValueError("Google OAuth configuration is incomplete.")
 
     monkeypatch.setattr(
-        "app.web.routes.build_google_authorization_redirect",
-        fake_build_google_authorization_redirect,
+        "app.web.routes.build_google_oauth_start",
+        fake_build_google_oauth_start,
     )
 
     response = client.get("/auth/google/start", follow_redirects=False)
@@ -168,12 +174,12 @@ def test_oauth_start_missing_credentials_file_redirects_with_operator_message(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
+    def fake_build_google_oauth_start(settings, state_token: str):
         raise FileNotFoundError("/missing/google-oauth-client.json")
 
     monkeypatch.setattr(
-        "app.web.routes.build_google_authorization_redirect",
-        fake_build_google_authorization_redirect,
+        "app.web.routes.build_google_oauth_start",
+        fake_build_google_oauth_start,
     )
 
     response = client.get("/auth/google/start", follow_redirects=False)
@@ -187,12 +193,12 @@ def test_oauth_start_malformed_credentials_file_redirects_with_operator_message(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
+    def fake_build_google_oauth_start(settings, state_token: str):
         raise ValueError("Google OAuth credentials file is invalid JSON.")
 
     monkeypatch.setattr(
-        "app.web.routes.build_google_authorization_redirect",
-        fake_build_google_authorization_redirect,
+        "app.web.routes.build_google_oauth_start",
+        fake_build_google_oauth_start,
     )
 
     response = client.get("/auth/google/start", follow_redirects=False)
@@ -212,11 +218,17 @@ def test_oauth_callback_persists_credentials_and_redirects_home(
     client.app.state.cleanup_job_auth_failed = True
     client.app.state.scheduler.pause_job("cleanup")
 
-    def fake_build_google_authorization_redirect(settings, state_token: str) -> str:
-        return f"https://accounts.google.com/o/oauth2/v2/auth?state={state_token}"
+    def fake_build_google_oauth_start(settings, state_token: str):
+        from app.gmail.oauth import GoogleOAuthStart
 
-    def fake_exchange_google_code(settings, code: str) -> dict[str, object]:
+        return GoogleOAuthStart(
+            authorization_url=f"https://accounts.google.com/o/oauth2/v2/auth?state={state_token}",
+            code_verifier="verifier-123",
+        )
+
+    def fake_exchange_google_code(settings, code: str, code_verifier: str) -> dict[str, object]:
         assert code == "abc"
+        assert code_verifier == "verifier-123"
         return {
             "token": "access-token",
             "refresh_token": "refresh-token",
@@ -227,8 +239,8 @@ def test_oauth_callback_persists_credentials_and_redirects_home(
         }
 
     monkeypatch.setattr(
-        "app.web.routes.build_google_authorization_redirect",
-        fake_build_google_authorization_redirect,
+        "app.web.routes.build_google_oauth_start",
+        fake_build_google_oauth_start,
     )
     monkeypatch.setattr("app.web.routes.exchange_google_code", fake_exchange_google_code)
 
@@ -242,6 +254,7 @@ def test_oauth_callback_persists_credentials_and_redirects_home(
     assert read_gmail_credentials(token_path)["refresh_token"] == "refresh-token"
     assert client.app.state.cleanup_job_auth_failed is False
     assert client.app.state.scheduler.get_job("cleanup").next_run_time is not None
+    assert "email_hoover_oauth_code_verifier=\"\"" in response.headers["set-cookie"]
 
 
 def test_oauth_callback_rejects_state_mismatch(client: TestClient) -> None:
@@ -296,7 +309,8 @@ def test_oauth_callback_write_failure_preserves_existing_credentials(
     )
     client.app.state.settings = replace(client.app.state.settings, gmail_token_path=token_path)
 
-    def fake_exchange_google_code(settings, code: str) -> dict[str, object]:
+    def fake_exchange_google_code(settings, code: str, code_verifier: str) -> dict[str, object]:
+        assert code_verifier == "verifier-123"
         return {
             "token": "new-access-token",
             "refresh_token": "new-refresh-token",
@@ -312,6 +326,7 @@ def test_oauth_callback_write_failure_preserves_existing_credentials(
     monkeypatch.setattr("app.web.routes.exchange_google_code", fake_exchange_google_code)
     monkeypatch.setattr("app.web.routes.write_gmail_credentials", fake_write_gmail_credentials)
     client.cookies.set("email_hoover_oauth_state", "expected")
+    client.cookies.set("email_hoover_oauth_code_verifier", "verifier-123")
 
     response = client.get(
         "/auth/google/callback?state=expected&code=abc",
