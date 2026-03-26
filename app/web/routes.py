@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -164,9 +164,17 @@ def _auth_reconnect_message() -> str:
     return AUTH_RECONNECT_MESSAGE
 
 
+def _oauth_start_url(settings: Settings) -> str:
+    redirect = urlsplit(settings.google_redirect_uri)
+    if not redirect.scheme or not redirect.netloc:
+        return "/auth/google/start"
+    return f"{redirect.scheme}://{redirect.netloc}/auth/google/start"
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
-    auth_state = AuthState.from_disk(getattr(request.app.state, "settings", Settings.from_env()))
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    auth_state = AuthState.from_disk(settings)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -176,6 +184,7 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
             "recent_activity": list_recent_activity(session),
             "exceptions": list_paused_rules(session),
             "auth_connected": auth_state.connected,
+            "oauth_start_url": _oauth_start_url(settings),
             "error_message": _scheduler_status_message(request),
         },
     )

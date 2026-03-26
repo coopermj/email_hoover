@@ -4,6 +4,7 @@ from dataclasses import replace
 from fastapi.testclient import TestClient
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 from sqlalchemy.pool import StaticPool
 from sqlmodel import select
 from sqlmodel import Session, SQLModel, create_engine
@@ -108,6 +109,20 @@ def test_dashboard_shows_connect_button_when_gmail_disconnected(client: TestClie
 
     assert response.status_code == 200
     assert "Connect Gmail" in response.text
+
+
+def test_dashboard_uses_configured_callback_host_for_connect_button(client: TestClient) -> None:
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        google_redirect_uri="http://localhost:8765/auth/google/callback",
+    )
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    soup = BeautifulSoup(response.text, "html.parser")
+    form = soup.find("form", {"method": "get", "action": "http://localhost:8765/auth/google/start"})
+    assert form is not None
 
 
 def test_oauth_start_redirects_to_google_and_sets_state_cookie(

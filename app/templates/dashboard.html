@@ -15,7 +15,7 @@
             <button type="submit">Run Cleanup Now</button>
         </form>
         {% else %}
-        <form method="get" action="/auth/google/start">
+        <form method="get" action="{{ oauth_start_url }}">
             <button type="submit">Connect Gmail</button>
         </form>
         {% endif %}
