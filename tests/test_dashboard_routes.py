@@ -10,7 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app import create_app
 from app.gmail.auth import AuthState
-from app.gmail.oauth import read_gmail_credentials
+from app.gmail.oauth import read_gmail_credentials, write_gmail_credentials
 from app.models.candidate import Candidate
 from app.models.rule import CleanupRule
 from app.models.run_log import RunLog
@@ -227,6 +227,85 @@ def test_oauth_callback_persists_credentials_and_redirects_home(
     assert read_gmail_credentials(token_path)["refresh_token"] == "refresh-token"
     assert client.app.state.cleanup_job_auth_failed is False
     assert client.app.state.scheduler.get_job("cleanup").next_run_time is not None
+
+
+def test_oauth_callback_rejects_state_mismatch(client: TestClient) -> None:
+    client.cookies.set("email_hoover_oauth_state", "expected")
+    response = client.get(
+        "/auth/google/callback?state=wrong&code=abc",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "Google OAuth state validation failed." in client.get(response.headers["location"]).text
+
+
+def test_oauth_callback_handles_provider_error(client: TestClient) -> None:
+    client.cookies.set("email_hoover_oauth_state", "expected")
+    response = client.get(
+        "/auth/google/callback?state=expected&error=access_denied",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "Google OAuth failed: access_denied" in client.get(response.headers["location"]).text
+
+
+def test_oauth_callback_requires_authorization_code(client: TestClient) -> None:
+    client.cookies.set("email_hoover_oauth_state", "expected")
+    response = client.get(
+        "/auth/google/callback?state=expected",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "did not include an authorization code" in client.get(response.headers["location"]).text
+
+
+def test_oauth_callback_write_failure_preserves_existing_credentials(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_path = tmp_path / "gmail-token.json"
+    write_gmail_credentials(
+        token_path,
+        {
+            "token": "old-access-token",
+            "refresh_token": "old-refresh-token",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+            "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+        },
+    )
+    client.app.state.settings = replace(client.app.state.settings, gmail_token_path=token_path)
+
+    def fake_exchange_google_code(settings, code: str) -> dict[str, object]:
+        return {
+            "token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+            "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+        }
+
+    def fake_write_gmail_credentials(path: Path, payload: dict[str, object]) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("app.web.routes.exchange_google_code", fake_exchange_google_code)
+    monkeypatch.setattr("app.web.routes.write_gmail_credentials", fake_write_gmail_credentials)
+    client.cookies.set("email_hoover_oauth_state", "expected")
+
+    response = client.get(
+        "/auth/google/callback?state=expected&code=abc",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "disk full" in client.get(response.headers["location"]).text
+    assert read_gmail_credentials(token_path)["refresh_token"] == "old-refresh-token"
 
 
 def test_approve_rule_action_redirects_back_to_dashboard(client: TestClient, session: Session) -> None:

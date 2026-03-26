@@ -218,7 +218,7 @@ def complete_google_oauth(request: Request) -> RedirectResponse:
     try:
         credential_payload = exchange_google_code(settings, code)
         write_gmail_credentials(settings.gmail_token_path, credential_payload)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         return _redirect_with_error(str(exc))
 
     resume_cleanup_job(request.app)
