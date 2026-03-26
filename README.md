@@ -28,6 +28,12 @@ python3 -m pip install -e ".[dev]"
 
 The app supports two ways to supply Google OAuth client credentials.
 
+You can start from:
+
+```bash
+cp .env.example .env
+```
+
 ### Option 1: Credentials JSON file
 
 Set:
